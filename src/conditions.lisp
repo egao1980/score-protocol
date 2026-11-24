@@ -7,9 +7,11 @@
 ;;;;     INVALID-POSITION inside a USE-VALUE restart; its value is returned.
 ;;;;   VALIDATE-SCORE (SC0): SCORE-INVARIANT-VIOLATION inside a CONTINUE
 ;;;;     restart, which returns the score as it is.
-;;;;   APPLY-EDIT (SC1): INVALID-EDIT inside SKIP-EDIT (the score is returned
-;;;;     unchanged with an empty change set) and USE-VALUE (an operation to
-;;;;     apply instead).
+;;;;   APPLY-EDIT and INVERT-EDIT (SC1): INVALID-EDIT, and each of its
+;;;;     subtypes, inside SKIP-EDIT (the score is returned unchanged with an
+;;;;     empty change set) and USE-VALUE (an operation to apply instead).
+;;;;     MEASURE-OVERFULL adds REFLOW (the same INSERT-EVENT with REFLOW true).
+;;;;     Which operation signals which subtype, and when: edits.lisp.
 ;;;;   MusicXML readers (SC2): MUSICXML-UNSUPPORTED inside SKIP-ELEMENT.
 ;;;;
 ;;;; Warnings: LOSSY-CONVERSION is signalled with WARN. LOW-CONFIDENCE-GUESS is
@@ -58,6 +60,42 @@ number, or an absolute offset."))
              (format s "invalid edit ~S~@[: ~A~]"
                      (invalid-edit-op c) (score-error-reason c)))))
 
+(define-condition edit-target-missing (invalid-edit unknown-element) ()
+  (:documentation "An id the operation names is not in the score.")
+  (:report (lambda (c s)
+             (format s "invalid edit ~S: no element with id ~S"
+                     (invalid-edit-op c) (unknown-element-id c)))))
+
+(define-condition edit-position-invalid (invalid-edit invalid-position) ()
+  (:documentation "A position, bar range or duration of the operation lies outside
+the score or off the voice's event boundaries.")
+  (:report (lambda (c s)
+             (format s "invalid edit ~S: position ~S~@[: ~A~]"
+                     (invalid-edit-op c) (invalid-position-position c)
+                     (score-error-reason c)))))
+
+(define-condition measure-overfull (invalid-edit)
+  ((voice :initarg :voice :initform nil :reader measure-overfull-voice
+          :documentation "The id of the voice.")
+   (bar :initarg :bar :initform nil :reader measure-overfull-bar
+        :documentation "The bar that would overflow.")
+   (excess :initarg :excess :initform nil :reader measure-overfull-excess
+           :documentation "How much sounding music would pass its barline, in whole notes."))
+  (:documentation "INSERT-EVENT without REFLOW would push sounding music past the
+barline of its voice measure.")
+  (:report (lambda (c s)
+             (format s "invalid edit ~S: voice ~S overfills bar ~S by ~S"
+                     (invalid-edit-op c) (measure-overfull-voice c)
+                     (measure-overfull-bar c) (measure-overfull-excess c)))))
+
+(define-condition edit-breaks-score (invalid-edit score-invariant-violation) ()
+  (:documentation "The edited score has CHECK-SCORE issues the score before the
+edit did not have (edits.lisp). ISSUES holds them.")
+  (:report (lambda (c s)
+             (let ((issues (score-invariant-violation-issues c)))
+               (format s "invalid edit ~S: ~D new issue~:P~@[, first ~S~]"
+                       (invalid-edit-op c) (length issues) (first issues))))))
+
 (define-condition score-format-error (score-error)
   ((format :initarg :format :initform nil :reader score-format-error-format
            :documentation "The format keyword: :SEXP, :MUSICXML, :MXL, :MIDI.")
@@ -97,6 +135,11 @@ number, or an absolute offset."))
 (defun skip-edit (&optional condition)
   "Invoke the SKIP-EDIT restart (established by APPLY-EDIT, SC1)."
   (let ((restart (find-restart 'skip-edit condition)))
+    (when restart (invoke-restart restart))))
+
+(defun reflow (&optional condition)
+  "Invoke the REFLOW restart (established by APPLY-EDIT for MEASURE-OVERFULL, SC1)."
+  (let ((restart (find-restart 'reflow condition)))
     (when restart (invoke-restart restart))))
 
 (defun skip-element (&optional condition)

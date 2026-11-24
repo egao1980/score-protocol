@@ -42,6 +42,7 @@
  ("sc0-repeats-voltas" 5 4 1 "4/4" "D major")
  ("sc0-repeats-voltas" 6 5 1 "4/4" "D major")
  ("sc0-repeats-voltas" 7 6 1 "4/4" "D major")
+ ("sc0-repeats-voltas" 8 7 1 "4/4" "D major")
  ("sc0-satb" 1 0 1 "4/4" "G major")
  ("sc0-satb" 2 1 1 "4/4" "G major")
  ("sc0-satb" 3 2 1 "4/4" "G major")

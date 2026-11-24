@@ -76,7 +76,8 @@ failing rows, each paired with the list of failed check indices."
 
 (defparameter +element-kinds+
   '(:measure :part :staff :voice :rest :note :chord :chord-note :lyric
-    :chord-symbol :spanner)
+    :chord-symbol :spanner :dynamic :fermata :breath-mark :articulation :tie
+    :tempo-mark :rehearsal :jump :ending)
   "The kind keywords of element forms (src/sexp.lisp).")
 
 (defun strip-ids (form)
@@ -95,4 +96,6 @@ failing rows, each paired with the list of failed check indices."
   "The prefix ids.lisp gives ELEMENT's minted ids, decided here independently."
   (etypecase element
     (measure-info "m") (part "p") (staff "st") (voice "v") (event "e")
-    (chord-note "n") (lyric "ly") (chord-symbol-anchor "h") (spanner "sp")))
+    (chord-note "n") (lyric "ly") (dynamic-mark "dy") (fermata "fe") (breath-mark "br")
+    (articulation "ar") (tie "ti") (tempo-mark "tm") (rehearsal-mark "rh") (jump-mark "jm")
+    (ending "en") (chord-symbol-anchor "h") (spanner "sp")))

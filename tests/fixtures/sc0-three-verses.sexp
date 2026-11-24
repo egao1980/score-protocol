@@ -4,7 +4,7 @@
 ;;;; end). Hand-built, MIT.
 (:score
  :metadata (:title "Hymn in Three Verses")
- :id-counter 47
+ :id-counter 49
  :measures
  ((:measure :id "m-1" :time "4/4" :key "G major")
   (:measure :id "m-2")
@@ -40,10 +40,10 @@
         :lyrics ((:lyric :id "ly-11" :text "dwell," :extender t)
                  (:lyric :id "ly-12" :verse 2 :text "y" :syllabic :end)
                  (:lyric :id "ly-13" :verse 3 :text "tell," :extender t)))
-       (:note :id "e-14" :pitch "A4" :duration 1/4 :breath-mark t
-        :lyrics ((:lyric :id "ly-15" :verse 2 :text "voice;")))
-       (:rest :id "e-16" :duration 1/4))
-      ((:note :id "e-17" :pitch "G4" :duration 1 :fermata :normal
-        :lyrics ((:lyric :id "ly-18" :text "Sing") (:lyric :id "ly-19" :verse 2 :text "Him")
-                 (:lyric :id "ly-1a" :verse 3 :text "Come")))))))))
- :spanners ((:spanner :id "sp-1b" :kind :slur :start "e-10" :end "e-14")))
+       (:note :id "e-14" :pitch "A4" :duration 1/4 :breath-mark (:breath-mark :id "br-15")
+        :lyrics ((:lyric :id "ly-16" :verse 2 :text "voice;")))
+       (:rest :id "e-17" :duration 1/4))
+      ((:note :id "e-18" :pitch "G4" :duration 1 :fermata (:fermata :id "fe-19")
+        :lyrics ((:lyric :id "ly-1a" :text "Sing") (:lyric :id "ly-1b" :verse 2 :text "Him")
+                 (:lyric :id "ly-1c" :verse 3 :text "Come")))))))))
+ :spanners ((:spanner :id "sp-1d" :kind :slur :start "e-10" :end "e-14")))

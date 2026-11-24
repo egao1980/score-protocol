@@ -11,6 +11,7 @@
 ;;; ("c").
 
 (defun nf (id pitch duration &rest keys) `(:note :id ,id :pitch ,pitch :duration ,duration ,@keys))
+(defun tf (end &optional (id "t")) `(:tie :id ,id :end ,end))
 (defun rf (id duration &rest keys) `(:rest :id ,id :duration ,duration ,@keys))
 (defun vf (id measures &rest keys) `(:voice :id ,id ,@keys :measures ,measures))
 
@@ -170,63 +171,63 @@
       '())
      ;; Ties
      ("a tie across the barline"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "c"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "c")))
                                        (list (nf "c" "D4" 1))))))
       '())
      ("a tie to a missing note"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "zz"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "zz")))
                                        (list (nf "c" "E4" 1))))))
-      '((:tie-target "b" 1)))
+      '((:tie-target "t" 1)))
      ("a tie to a rest"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "c"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "c")))
                                        (list (rf "c" 1))))))
-      '((:tie-target "b" 1)))
+      '((:tie-target "t" 1)))
      ("a tie to a measure"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "m-2"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "m-2")))
                                        (list (nf "c" "E4" 1))))))
-      '((:tie-target "b" 1)))
+      '((:tie-target "t" 1)))
      ("a tie to a note that doesn't follow"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :tie "c") (nf "b" "D4" 1/2))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :tie (tf "c")) (nf "b" "D4" 1/2))
                                        (list (nf "c" "C4" 1))))))
-      '((:tie-target "a" 1)))
+      '((:tie-target "t" 1)))
      ("a tie to a note in another voice"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "d"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "d")))
                                        (list (nf "c" "E4" 1))))
                         (vf "v-2" (list (list (rf "h" 1 :hidden t)) (list (nf "d" "D4" 1))))))
-      '((:tie-target "b" 1)))
+      '((:tie-target "t" 1)))
      ("a tie between different pitches"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "c"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "c")))
                                        (list (nf "c" "E4" 1))))))
-      '((:tie-pitch "b" 1)))
+      '((:tie-pitch "t" 1)))
      ("a tie between enharmonic spellings"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "C#4" 1/2 :tie "c"))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "C#4" 1/2 :tie (tf "c")))
                                        (list (nf "c" "Db4" 1))))))
-      '((:tie-pitch "b" 1)))
+      '((:tie-pitch "t" 1)))
      ("a tie between different pitches that don't follow"
-      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :tie "c") (nf "b" "D4" 1/2))
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :tie (tf "c")) (nf "b" "D4" 1/2))
                                        (list (nf "c" "E4" 1))))))
-      '((:tie-target "a" 1) (:tie-pitch "a" 1)))
+      '((:tie-target "t" 1) (:tie-pitch "t" 1)))
      ("two ties into one note"
       (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2)
-                                             '(:chord :id "ch" :notes ((:chord-note :id "n-1" :pitch "C4" :tie "c")
-                                                                       (:chord-note :id "n-2" :pitch "C4" :tie "c"))
+                                             '(:chord :id "ch" :notes ((:chord-note :id "n-1" :pitch "C4" :tie (:tie :id "t1" :end "c"))
+                                                                       (:chord-note :id "n-2" :pitch "C4" :tie (:tie :id "t2" :end "c")))
                                                :duration 1/2))
                                        (list (nf "c" "C4" 1))))))
-      '((:tie-target "n-2" 1)))
+      '((:tie-target "t2" 1)))
      ("chord notes tied across the barline"
       (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2)
-                                             '(:chord :id "ch" :notes ((:chord-note :id "n-1" :pitch "C4" :tie "n-3")
-                                                                       (:chord-note :id "n-2" :pitch "E4" :tie "n-4"))
+                                             '(:chord :id "ch" :notes ((:chord-note :id "n-1" :pitch "C4" :tie (:tie :id "t1" :end "n-3"))
+                                                                       (:chord-note :id "n-2" :pitch "E4" :tie (:tie :id "t2" :end "n-4")))
                                                :duration 1/2))
                                        (list '(:chord :id "c" :notes ((:chord-note :id "n-3" :pitch "C4")
                                                                       (:chord-note :id "n-4" :pitch "E4"))
                                                :duration 1))))))
       '())
      ("a tie from a grace note"
-      (sf :voices (list (vf "v-1" (list (list (nf "g" "C4" 1/8 :grace :acciaccatura :tie "a")
+      (sf :voices (list (vf "v-1" (list (list (nf "g" "C4" 1/8 :grace :acciaccatura :tie (tf "a"))
                                              (nf "a" "C4" 1/2) (nf "b" "D4" 1/2))
                                        (list (nf "c" "E4" 1))))))
-      '((:tie-target "g" 1)))
+      '((:tie-target "t" 1)))
      ;; Spanners
      ("a slur to a missing event" (sf :spanners (slur "a" "zz")) '((:spanner-endpoint "s" nil)))
      ("a slur from a measure" (sf :spanners (slur "m-1" "c")) '((:spanner-endpoint "s" nil)))
@@ -281,6 +282,61 @@
                         (vf "v-2" (list (list (nf "d" "G3" 1)) (list (nf "e" "G3" 1)))))
           :spanners (slur "a" "d"))
       '((:spanner-order "s" nil)))
+     ;; Marks
+     ("two staccatos on one note"
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :articulations '((:articulation :id "s1" :kind :staccato)
+                                                                                (:articulation :id "s2" :kind :staccato)))
+                                             (nf "b" "D4" 1/2))
+                                       (list (nf "c" "E4" 1))))))
+      '((:duplicate-mark "a" 1)))
+     ("a staccato and an accent"
+      (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2 :articulations '((:articulation :id "s1" :kind :staccato)
+                                                                                (:articulation :id "s2" :kind :accent)))
+                                             (nf "b" "D4" 1/2))
+                                       (list (nf "c" "E4" 1))))))
+      '())
+     ("two segnos in one bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major")
+                      (:measure :id "m-2" :jump ((:jump :id "j1" :kind :segno) (:jump :id "j2" :kind :segno)))))
+      '((:duplicate-mark "m-2" 2)))
+     ("a segno and a fine in one bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major")
+                      (:measure :id "m-2" :jump ((:jump :id "j1" :kind :segno) (:jump :id "j2" :kind :fine)))))
+      '())
+     ("a tempo mark at the end of its bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major"
+                       :tempo ((:tempo-mark :id "t1" :offset 1 :text "rit.")))
+                      (:measure :id "m-2")))
+      '((:tempo-mark-position "t1" 1)))
+     ("a tempo mark inside its bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major"
+                       :tempo ((:tempo-mark :id "t1" :offset 3/4 :text "rit.")))
+                      (:measure :id "m-2")))
+      '())
+     ("a tempo mark past a short bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major")
+                      (:measure :id "m-2" :length 1/2 :tempo ((:tempo-mark :id "t1" :offset 1/2 :text "a tempo"))))
+          :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2))
+                                       (list (nf "c" "E4" 1/2))))))
+      '((:tempo-mark-position "t1" 2)))
+     ("an ending past the last bar"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major")
+                      (:measure :id "m-2" :ending (:ending :id "en" :passes (1) :measures 2))))
+      '((:bad-ending "en" 2)))
+     ("an ending inside another"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major"
+                       :ending (:ending :id "e1" :passes (1) :measures 2))
+                      (:measure :id "m-2" :ending (:ending :id "e2" :passes (2)))))
+      '((:bad-ending "e2" 2)))
+     ("endings side by side"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major" :ending (:ending :id "e1" :passes (1)))
+                      (:measure :id "m-2" :ending (:ending :id "e2" :passes (2)))))
+      '())
+     ("an ending over the whole score"
+      (sf :measures '((:measure :id "m-1" :time "4/4" :key "C major"
+                       :ending (:ending :id "e1" :passes (1 2) :measures 2))
+                      (:measure :id "m-2")))
+      '())
      ;; Chord symbols
      ("chord symbols inside the bars"
       (sf :chord-symbols (list (chord-symbol-at "h-1" 1 0) (chord-symbol-at "h-2" 1 3/4)
@@ -321,7 +377,7 @@
     (ok (equal '(:expected 1 :actual 3/4) (score-issue-detail duration))))
   (let ((pitch (first (check-score
                        (sexp-to-score
-                        (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie "c"))
+                        (sf :voices (list (vf "v-1" (list (list (nf "a" "C4" 1/2) (nf "b" "D4" 1/2 :tie (tf "c")))
                                                          (list (nf "c" "E4" 1)))))))))))
     (ok (eq :tie-pitch (score-issue-kind pitch)))
     (ok (null (score-issue-detail pitch)))))
@@ -357,7 +413,7 @@
 
 (deftest uncertainty-default-threshold
   (let ((s (fixture-score "sc0-omr-result")))
-    (ok (equal '("m-3" "e-9" "ly-a" "e-d" "n-f" "e-h" "h-j" "sp-l") (ids (uncertain-elements s)))
+    (ok (equal '("m-3" "e-9" "ly-a" "e-d" "n-f" "e-h" "h-k" "sp-m") (ids (uncertain-elements s)))
         "below 0.8 by default, and 0.8 itself is not below it")
     (ok (every (lambda (e) (typep e 'element)) (uncertain-elements s)))
     (ok (null (uncertain-elements (fixture-score "sc0-satb") :below 2))

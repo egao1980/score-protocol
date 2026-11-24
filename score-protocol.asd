@@ -3,7 +3,7 @@
   :description "CLOS score model for cl-stack: parts, measures, voices, lyrics, chord symbols, edit operations and views"
   :author "egao1980"
   :license "MIT"
-  :depends-on ((:version "music-theory" "0.3.0") "fset")
+  :depends-on ((:version "music-theory" "0.4.0") "fset")
   :pathname "src"
   :serial t
   :components ((:file "package")

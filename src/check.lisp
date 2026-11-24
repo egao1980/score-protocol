@@ -13,7 +13,8 @@
 ;;;; ONSET is the ABSOLUTE-OFFSET of its ELEMENT-POSITION, defined for events
 ;;;; that aren't past the map. A "note" is a NOTE-EVENT or a CHORD-NOTE, and the
 ;;;; event of a note is the note itself for a note event, its chord for a chord
-;;;; note. Unless stated, BAR is the bar of the event the subject belongs to.
+;;;; note. A tie's source is the note that holds it. Unless stated, BAR is the
+;;;; bar of the event the subject belongs to (for a tie, its source's event).
 ;;;;
 ;;;; One issue per subject, per kind:
 ;;;;   :DUPLICATE-ID      ID is carried by two or more elements. ID = that id,
@@ -42,16 +43,18 @@
 ;;;;                      lyric.
 ;;;;   :DUPLICATE-VERSE   an event with two or more lyrics of the same verse.
 ;;;;                      ID = the event.
-;;;;   :TIE-TARGET        a note whose TIE is not NIL and any of: no element has
-;;;;                      that id; it isn't a note; its event isn't in the same
-;;;;                      voice as the source's event; either event is a grace
-;;;;                      event or past the map; the target event's onset isn't
-;;;;                      the source event's onset + its duration; an earlier note
-;;;;                      in document order ties to the same id. ID = the source
-;;;;                      note.
-;;;;   :TIE-PITCH         a note whose TIE names a note (anywhere) whose pitch
-;;;;                      isn't EQUALP to its own: a tie joins equal spellings.
-;;;;                      ID = the source note.
+;;;;   :DUPLICATE-MARK    an event with two or more articulations of one KIND, or
+;;;;                      a measure with two or more jump marks of one KIND. ID =
+;;;;                      the event or the measure, BAR = its bar.
+;;;;   :TIE-TARGET        a tie for which any of: no element has the id END; it
+;;;;                      isn't a note; its event isn't in the same voice as the
+;;;;                      source's event; either event is a grace event or past
+;;;;                      the map; the target event's onset isn't the source
+;;;;                      event's onset + its duration; an earlier tie in document
+;;;;                      order has the same END. ID = the tie.
+;;;;   :TIE-PITCH         a tie whose END names a note (anywhere) whose pitch
+;;;;                      isn't EQUALP to the source's: a tie joins equal
+;;;;                      spellings. ID = the tie.
 ;;;;   :SPANNER-ENDPOINT  a spanner whose START or END names no element or one
 ;;;;                      that isn't an event; or whose two events are in
 ;;;;                      different parts; or one is past the map; or, for a
@@ -68,6 +71,12 @@
 ;;;;                      of a bar belongs to the next one), or whose position is
 ;;;;                      EQUAL to an earlier anchor's in the track. ID = the
 ;;;;                      anchor, BAR NIL.
+;;;;   :TEMPO-MARK-POSITION a tempo mark whose OFFSET isn't < the BAR-LENGTH of
+;;;;                      its measure. ID = the tempo mark, BAR = its bar.
+;;;;   :BAD-ENDING        an ending whose MEASURES run past the last measure (it
+;;;;                      starts at measure index i and i + MEASURES > the number
+;;;;                      of measures), or that starts on a measure an earlier
+;;;;                      ending spans. ID = the ending, BAR = its measure's bar.
 ;;;; Lookups of a referenced id go through FIND-ELEMENT, so with duplicate ids
 ;;;; they see the first carrier.
 ;;;;
@@ -81,8 +90,8 @@
 (defparameter +issue-kinds+
   '(:duplicate-id :missing-signature :bad-pickup :voice-staff :measure-count
     :measure-duration :unnotatable-duration :degenerate-chord :misplaced-lyric
-    :duplicate-verse :tie-target :tie-pitch :spanner-endpoint :spanner-order
-    :chord-symbol-position)
+    :duplicate-verse :duplicate-mark :tie-target :tie-pitch :spanner-endpoint
+    :spanner-order :chord-symbol-position :tempo-mark-position :bad-ending)
   "SCORE-ISSUE-KIND values, defined in the file header. Data.")
 
 (defstruct (score-issue (:constructor make-score-issue))

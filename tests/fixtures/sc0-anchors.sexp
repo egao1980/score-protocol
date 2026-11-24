@@ -9,6 +9,6 @@
  ("sc0-chords-under-rests" "h-m" 5/2)
  ("sc0-chords-under-rests" "h-n" 3)
  ("sc0-chords-under-rests" "h-o" 15/4)
- ("sc0-omr-result" "h-j" 0)
- ("sc0-omr-result" "h-k" 5/4)
+ ("sc0-omr-result" "h-k" 0)
+ ("sc0-omr-result" "h-l" 5/4)
 )

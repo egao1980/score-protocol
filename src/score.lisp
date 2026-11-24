@@ -38,8 +38,10 @@
 ;;;;     ERRORP is false, else UNKNOWN-ELEMENT (ID = the id) inside a USE-VALUE
 ;;;;     restart whose value is returned.
 ;;;;   ELEMENT-PARENT score id: the element above it in the tree: a staff's or
-;;;;     voice's part, an event's voice, a chord note's or lyric's event. NIL for
-;;;;     measures, parts, chord-symbol anchors and spanners.
+;;;;     voice's part; an event's voice; the event of a chord note, a lyric, a
+;;;;     dynamic, a fermata, a breath mark or an articulation; a tie's note; the
+;;;;     measure of an ending, a jump mark, a rehearsal mark or a tempo mark. NIL
+;;;;     for measures, parts, chord-symbol anchors and spanners.
 ;;;;   ELEMENT-POSITION score id: measure-map.lisp.
 ;;;;   FIND-SLICE score slice-id &key (errorp t): ids.lisp.
 ;;;;   ELEMENT-PARENT and ELEMENT-POSITION treat an unknown id as FIND-ELEMENT

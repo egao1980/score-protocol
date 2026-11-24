@@ -1,11 +1,20 @@
-;;;; SC0 elements: parts, staves, voices, events, chord notes, lyrics, chord
-;;;; symbols, spanners, and their provenance.
+;;;; SC0 elements: parts, staves, voices, events, chord notes, lyrics, the
+;;;; marks on events, chord symbols, spanners, and their provenance.
 ;;;;
 ;;;; Values are immutable: classes have readers and no writers, structs have
 ;;;; read-only slots. Durations and offsets are CL rationals in whole notes
 ;;;; (1/4 = a quarter), as in music-theory.
 ;;;;
-;;;; Every element has an ID (ids.lisp), a PROVENANCE and a CONFIDENCE:
+;;;; What is an element. Everything a user can select or edit, and everything
+;;;; an engraver draws as an object of its own, is an ELEMENT with an id
+;;;; (ids.lisp): a click on the rendering finds its element by id. So the marks
+;;;; on events (dynamics, fermatas, breath marks, articulations, ties) and on
+;;;; measures (tempo marks, rehearsal marks, jumps, endings; measure-map.lisp)
+;;;; are elements, as are notes, lyrics, chord symbols and spanners. What the
+;;;; engraver derives (stems, beams, accidentals shown, tuplet brackets, clefs,
+;;;; key and time signatures, barlines) belongs to the element it derives from.
+;;;;
+;;;; Every element has an ID, a PROVENANCE and a CONFIDENCE:
 ;;;;   PROVENANCE  NIL, or a PROVENANCE struct: SOURCE, a keyword (:user,
 ;;;;               :musicxml, :midi, :omr, :transcription, ...); BACKEND, the
 ;;;;               name of the system that produced the element, or NIL; PAGE,
@@ -16,15 +25,17 @@
 ;;;; An edit (SC1) sets the elements it changes to provenance :user and
 ;;;; confidence 1.
 ;;;;
-;;;; Constructors (MAKE-PART, MAKE-NOTE-EVENT, ...) take keyword arguments
-;;;; named like the readers and signal TYPE-ERROR (CHECK-TYPE, with its
-;;;; STORE-VALUE restart) for an argument outside the type listed below. They
-;;;; check each value on its own; everything that relates two values (a tie and
-;;;; its target, a voice's staff and its part) is a CHECK-SCORE issue. They
-;;;; store fresh lists, and normalise:
+;;;; Constructors (MAKE-PART, MAKE-NOTE-EVENT, MAKE-FERMATA, ...) take keyword
+;;;; arguments named like the readers and signal TYPE-ERROR (CHECK-TYPE, with
+;;;; its STORE-VALUE restart) for an argument outside the type listed below.
+;;;; They check each value on its own; everything that relates two values (a tie
+;;;; and its stop note, a voice's staff and its part) is a CHECK-SCORE issue.
+;;;; They store fresh lists, and normalise:
 ;;;;   * generalized booleans are stored as T or NIL;
-;;;;   * ARTICULATIONS: duplicates dropped, in +ARTICULATIONS+ order;
-;;;;   * LYRICS: stable-sorted by verse (two lyrics of one verse are kept);
+;;;;   * ARTICULATIONS: stable-sorted by KIND in +ARTICULATIONS+ order (two of
+;;;;     one kind are kept: a :DUPLICATE-MARK issue);
+;;;;   * LYRICS: stable-sorted by verse (two of one verse are kept: a
+;;;;     :DUPLICATE-VERSE issue);
 ;;;;   * a voice's MEASURES: a list or FSet seq of voice measures, each a list or
 ;;;;     FSet seq of events, stored as an FSet seq of FSet seqs.
 ;;;;
@@ -39,26 +50,30 @@
 ;;;;                 one voice measure per measure of the measure map. An empty
 ;;;;                 voice measure means the voice is silent there.
 ;;;;   EVENT         DURATION, a positive rational; TUPLET, NIL or a positive
-;;;;                 ratio n/m ("n in the time of m", music-theory); FERMATA,
-;;;;                 NIL or a keyword of +FERMATAS+; DYNAMIC, NIL or a keyword of
-;;;;                 +DYNAMICS+ (a point dynamic at the event's onset); LYRICS, a
-;;;;                 list of LYRICs.
+;;;;                 ratio n/m ("n in the time of m", music-theory); FERMATA, NIL
+;;;;                 or a FERMATA; DYNAMIC, NIL or a DYNAMIC-MARK (a point
+;;;;                 dynamic at the event's onset); LYRICS, a list of LYRICs.
 ;;;;   REST-EVENT    + MEASURE-REST-P (a whole-measure rest, drawn as one
 ;;;;                 symbol whatever its length); HIDDEN-P (an invisible rest
 ;;;;                 that only fills time, MusicXML <forward>)
 ;;;;   SOUNDING-EVENT + GRACE, NIL or a keyword of +GRACE-KINDS+; ARTICULATIONS,
-;;;;                 a list of +ARTICULATIONS+ keywords; BREATH-MARK (after the
-;;;;                 event)
+;;;;                 a list of ARTICULATIONs; BREATH-MARK, NIL or a BREATH-MARK
+;;;;                 (after the event)
 ;;;;   NOTE-EVENT    a SOUNDING-EVENT with one pitch (PITCHED below)
 ;;;;   CHORD-EVENT   a SOUNDING-EVENT with NOTES, a list of CHORD-NOTEs, sharing
 ;;;;                 its duration
 ;;;;   CHORD-NOTE    an ELEMENT that is PITCHED
 ;;;;   PITCHED       PITCH, a music-theory SPELLED-PITCH (required);
 ;;;;                 ACCIDENTAL, a keyword of +ACCIDENTAL-DISPLAYS+, default
-;;;;                 :AUTO; TIE, NIL or the id of the note this one is tied to
+;;;;                 :AUTO; TIE, NIL or a TIE to the next note
 ;;;;   LYRIC         VERSE, an integer >= 1, default 1; TEXT, a string
 ;;;;                 (required); SYLLABIC, a keyword of +SYLLABICS+, default
 ;;;;                 :SINGLE; EXTENDER (a melisma line follows the syllable)
+;;;;   DYNAMIC-MARK  VALUE, a keyword of +DYNAMICS+ (required)
+;;;;   FERMATA       SHAPE, a keyword of +FERMATAS+, default :NORMAL
+;;;;   BREATH-MARK   no slots of its own
+;;;;   ARTICULATION  KIND, a keyword of +ARTICULATIONS+ (required)
+;;;;   TIE           END, the id of the note it ties to (required)
 ;;;;   CHORD-SYMBOL-ANCHOR  POSITION, a (bar . offset) cons, bar an integer >= 0
 ;;;;                 and offset a rational >= 0 (required); SYMBOL, a music-theory
 ;;;;                 CHORD-SYMBOL, N.C. allowed (required)
@@ -69,9 +84,9 @@
 ;;;; value, and they don't count toward a measure's rhythm.
 ;;;; A duration is sounding time: a triplet eighth has DURATION 1/12 and TUPLET
 ;;;; 3/2, and its notated value is DURATION * TUPLET = 1/8.
-;;;; A tie is stored once, on its start note, as the id of its stop note. The stop
-;;;; side is implied. Chord symbols are anchored to positions, not to notes, so a
-;;;; chord can change under a held note or a rest.
+;;;; A tie is stored once, on its start note: a TIE element whose END is the id
+;;;; of its stop note. The stop side is implied. Chord symbols are anchored to
+;;;; positions, not to notes, so a chord can change under a held note or a rest.
 
 (in-package #:score-protocol)
 
@@ -82,11 +97,11 @@
   "STAFF-CLEF values. Data.")
 
 (defparameter +fermatas+ '(:normal :short :long)
-  "EVENT-FERMATA values (MusicXML normal, angled, square). Data.")
+  "FERMATA-SHAPE values (MusicXML normal, angled, square). Data.")
 
 (defparameter +dynamics+
   '(:pppp :ppp :pp :p :mp :mf :f :ff :fff :ffff :fp :sf :sfp :sfz :fz :rf :rfz)
-  "EVENT-DYNAMIC values. Data.")
+  "DYNAMIC-MARK-VALUE values. Data.")
 
 (defparameter +grace-kinds+ '(:appoggiatura :acciaccatura)
   "EVENT-GRACE values: an acciaccatura is the slashed grace note. Data.")
@@ -94,7 +109,7 @@
 (defparameter +articulations+
   '(:accent :marcato :staccato :staccatissimo :tenuto :detached-legato
     :spiccato :stress :unstress :soft-accent)
-  "EVENT-ARTICULATIONS values, in canonical order. Data.")
+  "ARTICULATION-KIND values, in canonical order. Data.")
 
 (defparameter +accidental-displays+ '(:auto :forced :cautionary)
   "NOTE-ACCIDENTAL values: :AUTO shows an accidental when the key and the bar
@@ -165,7 +180,7 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
    (accidental :initarg :accidental :initform :auto :reader note-accidental)
    (tie :initarg :tie :initform nil :reader note-tie))
   (:documentation "Mixin for NOTE-EVENT and CHORD-NOTE: a spelled pitch, its
-accidental display, and the id of the note it is tied to."))
+accidental display, and its TIE to the next note."))
 
 (defclass note-event (sounding-event pitched) ())
 
@@ -173,6 +188,21 @@ accidental display, and the id of the note it is tied to."))
   ((notes :initarg :notes :initform '() :reader chord-event-notes)))
 
 (defclass chord-note (element pitched) ())
+
+(defclass dynamic-mark (element)
+  ((value :initarg :value :reader dynamic-mark-value)))
+
+(defclass fermata (element)
+  ((shape :initarg :shape :initform :normal :reader fermata-shape)))
+
+(defclass breath-mark (element) ())
+
+(defclass articulation (element)
+  ((kind :initarg :kind :reader articulation-kind)))
+
+(defclass tie (element)
+  ((end :initarg :end :reader tie-end
+        :documentation "The id of the note this tie ends on.")))
 
 (defclass lyric (element)
   ((verse :initarg :verse :initform 1 :reader lyric-verse)
@@ -237,6 +267,31 @@ events; it is stored as an FSet seq of FSet seqs."
   "A CHORD-NOTE, one pitch of a CHORD-EVENT."
   (declare (ignorable id pitch accidental tie provenance confidence))
   (%sc0-pending 'make-chord-note))
+
+(defun make-dynamic-mark (&key id value provenance confidence)
+  "A DYNAMIC-MARK with VALUE from +DYNAMICS+."
+  (declare (ignorable id value provenance confidence))
+  (%sc0-pending 'make-dynamic-mark))
+
+(defun make-fermata (&key id (shape :normal) provenance confidence)
+  "A FERMATA with SHAPE from +FERMATAS+."
+  (declare (ignorable id shape provenance confidence))
+  (%sc0-pending 'make-fermata))
+
+(defun make-breath-mark (&key id provenance confidence)
+  "A BREATH-MARK."
+  (declare (ignorable id provenance confidence))
+  (%sc0-pending 'make-breath-mark))
+
+(defun make-articulation (&key id kind provenance confidence)
+  "An ARTICULATION with KIND from +ARTICULATIONS+."
+  (declare (ignorable id kind provenance confidence))
+  (%sc0-pending 'make-articulation))
+
+(defun make-tie (&key id end provenance confidence)
+  "A TIE to the note whose id is END."
+  (declare (ignorable id end provenance confidence))
+  (%sc0-pending 'make-tie))
 
 (defun make-lyric (&key id (verse 1) text (syllabic :single) extender provenance confidence)
   "A LYRIC syllable of verse VERSE."

@@ -27,30 +27,42 @@
 ;;;;           :spanners (SPANNER...))
 ;;;;   (:measure :id :number STRING :time METER :key KEY :pickup T :length R
 ;;;;             :barline K (= :regular) :repeat-start T :repeat-end N
-;;;;             :volta (N...) :jump (K...) :rehearsal STRING :tempo (TEMPO-MARK...))
+;;;;             :ending ENDING :jump (JUMP...) :rehearsal REHEARSAL
+;;;;             :tempo (TEMPO-MARK...))
+;;;;   (:ending :id :passes (N...) (always) :measures N (= 1))
+;;;;   (:jump :id :kind K (always))
+;;;;   (:rehearsal :id :text STRING (always))
+;;;;   (:tempo-mark :id :offset R (= 0) :bpm REAL :beat-unit R :text STRING)
+;;;;                ; :bpm and :beat-unit are the TEMPO's, both written when it
+;;;;                ; isn't NIL
 ;;;;   (:part :id :name STRING :abbreviation STRING :staves (STAFF...) (always)
 ;;;;          :voices (VOICE...) (always))
 ;;;;   (:staff :id :clef K (= :treble))
 ;;;;   (:voice :id :name STRING :staff N (= 1) :stem K
 ;;;;           :measures ((EVENT...)...) (always))
 ;;;;   (:rest :id :duration R (always) :tuplet R :measure-rest T :hidden T
-;;;;          :fermata K :dynamic K :lyrics (LYRIC...))
+;;;;          :fermata FERMATA :dynamic DYNAMIC :lyrics (LYRIC...))
 ;;;;   (:note :id :pitch PITCH (always) :duration R (always) :tuplet R :grace K
-;;;;          :accidental K (= :auto) :tie ID :articulations (K...) :fermata K
-;;;;          :breath-mark T :dynamic K :lyrics (LYRIC...))
+;;;;          :accidental K (= :auto) :tie TIE :articulations (ARTICULATION...)
+;;;;          :fermata FERMATA :breath-mark BREATH-MARK :dynamic DYNAMIC
+;;;;          :lyrics (LYRIC...))
 ;;;;   (:chord :id :notes (CHORD-NOTE...) (always) :duration R (always) :tuplet R
-;;;;           :grace K :articulations (K...) :fermata K :breath-mark T :dynamic K
-;;;;           :lyrics (LYRIC...))
-;;;;   (:chord-note :id :pitch PITCH (always) :accidental K (= :auto) :tie ID)
+;;;;           :grace K :articulations (ARTICULATION...) :fermata FERMATA
+;;;;           :breath-mark BREATH-MARK :dynamic DYNAMIC :lyrics (LYRIC...))
+;;;;   (:chord-note :id :pitch PITCH (always) :accidental K (= :auto) :tie TIE)
+;;;;   (:tie :id :end ID (always))
+;;;;   (:articulation :id :kind K (always))
+;;;;   (:fermata :id :shape K (= :normal))
+;;;;   (:breath-mark :id)
+;;;;   (:dynamic :id :value K (always))
 ;;;;   (:lyric :id :verse N (= 1) :text STRING (always) :syllabic K (= :single)
 ;;;;           :extender T)
 ;;;;   (:chord-symbol :id :bar N (always) :offset R (always) :symbol SYMBOL (always))
 ;;;;   (:spanner :id :kind K (always) :start ID (always) :end ID (always))
-;;;; EVENT is a :rest, :note or :chord form. Values that aren't elements are
-;;;; plists with no kind keyword, keys in this order, defaults left out:
+;;;; EVENT is a :rest, :note or :chord form; the other upper-case names are the
+;;;; forms of those kinds. Values that aren't elements are plists with no kind
+;;;; keyword, keys in this order, defaults left out:
 ;;;;   PLIST       SCORE-METADATA as it is
-;;;;   TEMPO-MARK  (:offset R (= 0) :bpm REAL :beat-unit R :text STRING); :bpm
-;;;;               and :beat-unit are the TEMPO's, both written when it isn't NIL
 ;;;;   PROVENANCE  (:source K (always) :backend STRING :page N :bbox (X Y W H)
 ;;;;               :time-range (START END))
 ;;;;   SYMBOL      a music-theory CHORD-SYMBOL slot by slot in its slot order:

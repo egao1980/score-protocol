@@ -9,8 +9,8 @@ id rules in src/ids.lisp independent of the Lisp code: it walks each score in
 document order and checks that its ids are the ones MAKE-SCORE would mint for
 an id-less copy (m-1, m-2, p-3, ...), with :id-counter = the number of elements.
 --renumber rewrites the files in place so that they are, inserting and
-replacing ids and following references (:tie, :start, :end); the rest of the
-text is untouched.
+replacing ids and following references (a tie's :end, a spanner's :start and
+:end); the rest of the text is untouched.
 
 Then it builds every score in music21 (measures appended in order, a pickup as
 a short first measure with paddingLeft, grace notes with zero duration) and
@@ -104,7 +104,9 @@ def num(node, default=None):
 
 PREFIX = {"measure": "m", "part": "p", "staff": "st", "voice": "v", "rest": "e",
           "note": "e", "chord": "e", "chord-note": "n", "lyric": "ly",
-          "chord-symbol": "h", "spanner": "sp"}
+          "chord-symbol": "h", "spanner": "sp", "dynamic": "dy", "fermata": "fe",
+          "breath-mark": "br", "articulation": "ar", "tie": "ti", "tempo-mark": "tm",
+          "rehearsal": "rh", "jump": "jm", "ending": "en"}
 
 
 def base36(n):
@@ -116,31 +118,41 @@ def base36(n):
     return digits
 
 
+def is_element(node):
+    return (node is not None and node.kind == "list" and node.value
+            and node.value[0].kind == "kw" and node.value[0].value in PREFIX)
+
+
+def element_children(value):
+    """The element forms a plist value holds: one form, a list of forms, or
+    (a voice's measures) a list of lists of forms."""
+    if is_element(value):
+        yield value
+    elif value is not None and value.kind == "list":
+        for item in value.value:
+            if is_element(item):
+                yield item
+            elif item.kind == "list":
+                for inner in item.value:
+                    if is_element(inner):
+                        yield inner
+
+
+def walk(form):
+    """FORM, then its children in the order of its keys (canonical order)."""
+    yield form
+    _, keys = plist(form)
+    for value in keys.values():
+        for child in element_children(value):
+            yield from walk(child)
+
+
 def document_order(score):
-    """Yield every element form of SCORE in document order."""
+    """Yield every element form of SCORE in document order (src/ids.lisp)."""
     _, s = plist(score)
-    for m in items(s.get("measures")):
-        yield m
-    for part in items(s.get("parts")):
-        yield part
-        _, p = plist(part)
-        for staff in items(p.get("staves")):
-            yield staff
-        for voice in items(p.get("voices")):
-            yield voice
-            _, v = plist(voice)
-            for vm in items(v.get("measures")):
-                for event in items(vm):
-                    yield event
-                    kind, e = plist(event)
-                    for n in items(e.get("notes")):
-                        yield n
-                    for lyric in items(e.get("lyrics")):
-                        yield lyric
-    for a in items(s.get("chord-symbols")):
-        yield a
-    for sp in items(s.get("spanners")):
-        yield sp
+    for value in s.values():
+        for child in element_children(value):
+            yield from walk(child)
 
 
 def renumbered(text):
@@ -160,8 +172,8 @@ def renumbered(text):
         else:
             head = element.value[0]
             edits.append((head.end, head.end, f' :id "{new}"'))
-        for ref in ("tie", "start", "end"):
-            if ref in keys:
+        for ref in ("start", "end"):
+            if ref in keys and kind in ("spanner", "tie"):
                 refs.append(keys[ref])
     for ref in refs:
         if ref.value not in mapping:
@@ -172,7 +184,7 @@ def renumbered(text):
     edits.append((counter.start, counter.end, str(len(elements))))
     for start, end, new in sorted(edits, reverse=True):
         text = text[:start] + new + text[end:]
-    return text
+    return text, mapping
 
 
 # --- music21 ---------------------------------------------------------------
@@ -368,11 +380,13 @@ def main():
     names = sorted(f for f in os.listdir(HERE)
                    if f.startswith("sc0-") and f.endswith(".sexp") and f not in ORACLES)
     bars, events, anchors, uncertain = [], [], [], []
+    mappings = {}
     for file in names:
         path = os.path.join(HERE, file)
         with open(path, encoding="utf-8") as f:
             text = f.read()
-        canonical = renumbered(text)
+        canonical, mapping = renumbered(text)
+        mappings[file[:-len(".sexp")]] = mapping
         if canonical != text:
             if not renumber:
                 sys.exit(f"{file}: ids are not in document order (run with --renumber)")
@@ -391,6 +405,10 @@ def main():
                "SC0 pickups: (meter pickup full-bars completing bar-starts duration "
                "((absolute bar offset)...))", pickup_rows())
     write_rows("sc0-uncertain.sexp", "SC0 uncertainty: (fixture below (id...))", uncertain)
+    if renumber and os.environ.get("SC0_ID_MAP"):
+        import json
+        with open(os.environ["SC0_ID_MAP"], "w") as out:
+            json.dump(mappings, out, indent=1)
     print(f"{len(names)} fixtures, {len(bars)} bars, {len(events)} events, "
           f"{len(anchors)} anchors")
 

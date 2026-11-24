@@ -44,6 +44,12 @@ in backends (score-backend-musicxml, score-backend-midi).")
    #:chord-note #:make-chord-note
    #:note-pitch #:note-accidental #:note-tie
    #:lyric #:make-lyric #:lyric-verse #:lyric-text #:lyric-syllabic #:lyric-extender
+   ;; Marks on events (SC0)
+   #:dynamic-mark #:make-dynamic-mark #:dynamic-mark-value
+   #:fermata #:make-fermata #:fermata-shape
+   #:breath-mark #:make-breath-mark
+   #:articulation #:make-articulation #:articulation-kind
+   #:tie #:make-tie #:tie-end
    ;; Chord symbols and spanners (SC0)
    #:chord-symbol-anchor #:make-chord-symbol-anchor #:anchor-position #:anchor-symbol
    #:spanner #:make-spanner #:spanner-kind #:spanner-start #:spanner-end
@@ -51,10 +57,13 @@ in backends (score-backend-musicxml, score-backend-midi).")
    #:measure-info #:make-measure-info
    #:measure-info-number #:measure-info-time #:measure-info-key
    #:measure-info-pickup-p #:measure-info-length #:measure-info-barline
-   #:measure-info-repeat-start #:measure-info-repeat-end #:measure-info-volta
+   #:measure-info-repeat-start #:measure-info-repeat-end #:measure-info-ending
    #:measure-info-jump #:measure-info-rehearsal #:measure-info-tempo
-   #:tempo-mark #:make-tempo-mark #:tempo-mark-p
-   #:tempo-mark-offset #:tempo-mark-tempo #:tempo-mark-text
+   ;; Marks on measures (SC0)
+   #:ending #:make-ending #:ending-passes #:ending-measures
+   #:jump-mark #:make-jump-mark #:jump-mark-kind
+   #:rehearsal-mark #:make-rehearsal-mark #:rehearsal-mark-text
+   #:tempo-mark #:make-tempo-mark #:tempo-mark-offset #:tempo-mark-tempo #:tempo-mark-text
    ;; Bars and positions (SC0)
    #:score-first-bar #:score-last-bar #:score-duration
    #:bar-measure #:bar-time #:bar-key #:bar-length #:bar-start

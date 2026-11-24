@@ -25,12 +25,21 @@
 ;;; Minting -----------------------------------------------------------------
 
 (defun id-less-score ()
-  "A score built with no ids: two measures, a part with two staves and two
-voices (lyrics given out of verse order, a chord), a part with a silent voice,
+  "A score built with no ids but one (\"c5-next\", a tie's stop note): measures
+with a rehearsal mark, tempo marks given out of offset order, jump marks given
+out of order and an ending; a part with two staves and two voices whose events
+carry articulations (out of order), a fermata, a dynamic, lyrics (out of verse
+order), a chord with a tied note and a breath mark; a part with a silent voice;
 and two chord symbols given out of track order."
   (make-score
-   :measures (list (make-measure-info :time (parse-meter "3/4") :key (parse-key "F"))
-                   (make-measure-info))
+   :measures (list (make-measure-info
+                    :time (parse-meter "3/4") :key (parse-key "F")
+                    :rehearsal (make-rehearsal-mark :text "A")
+                    :tempo (list (make-tempo-mark :offset 1/2 :text "rit.")
+                                 (make-tempo-mark :tempo (make-tempo :bpm 90 :beat-unit 1/4))))
+                   (make-measure-info
+                    :jump (list (make-jump-mark :kind :fine) (make-jump-mark :kind :segno))
+                    :ending (make-ending :passes '(2))))
    :parts (list (make-part
                  :name "A"
                  :staves (list (make-staff) (make-staff :clef :bass))
@@ -38,16 +47,25 @@ and two chord symbols given out of track order."
                                 :measures
                                 (list (list (make-note-event
                                              :pitch (p "F4") :duration 1/2
+                                             :articulations (list (make-articulation :kind :staccato)
+                                                                  (make-articulation :kind :accent))
+                                             :fermata (make-fermata)
+                                             :dynamic (make-dynamic-mark :value :mf)
                                              :lyrics (list (make-lyric :verse 2 :text "b")
                                                            (make-lyric :text "a")))
                                             (make-chord-event
                                              :notes (list (make-chord-note :pitch (p "A4"))
-                                                          (make-chord-note :pitch (p "C5")))
-                                             :duration 1/4 :lyrics (list (make-lyric :text "c"))))
-                                      (list (make-rest-event :duration 3/4))))
+                                                          (make-chord-note :pitch (p "C5")
+                                                                           :tie (make-tie :end "c5-next")))
+                                             :duration 1/4 :breath-mark (make-breath-mark)
+                                             :lyrics (list (make-lyric :text "c"))))
+                                      (list (make-note-event :id "c5-next" :pitch (p "C5")
+                                                             :duration 3/4))))
                                (make-voice
                                 :staff 2
-                                :measures (list (list (make-rest-event :duration 3/4))
+                                :measures (list (list (make-rest-event
+                                                       :duration 3/4
+                                                       :dynamic (make-dynamic-mark :value :p)))
                                                 (list (make-note-event :pitch (p "F3")
                                                                        :duration 3/4))))))
                 (make-part :staves (list (make-staff))
@@ -61,15 +79,25 @@ and two chord symbols given out of track order."
 
 (deftest minting-follows-document-order
   (let ((s (id-less-score)))
-    (ok (equal '("m-1" "m-2" "p-3" "st-4" "st-5" "v-6" "e-7" "ly-8" "ly-9" "e-a" "n-b" "n-c" "ly-d"
-                 "e-e" "v-f" "e-g" "e-h" "p-i" "st-j" "v-k" "h-l" "h-m")
+    (ok (equal '("m-1" "rh-2" "tm-3" "tm-4" "m-5" "en-6" "jm-7" "jm-8"
+                 "p-9" "st-a" "st-b" "v-c"
+                 "e-d" "ar-e" "ar-f" "fe-g" "dy-h" "ly-i" "ly-j"
+                 "e-k" "n-l" "n-m" "ti-n" "br-o" "ly-p" "c5-next"
+                 "v-q" "e-r" "dy-s" "e-t" "p-u" "st-v" "v-w" "h-x" "h-y")
                (ids (score-elements s))))
-    (ok (= 22 (score-id-counter s)))
-    (ok (equal "a" (lyric-text (find-element s "ly-8"))) "verse 1 comes first")
-    (ok (eq :major (chord-symbol-quality (anchor-symbol (find-element s "h-l"))))
+    (ok (= 34 (score-id-counter s)))
+    (ok (eql 0 (tempo-mark-offset (find-element s "tm-3"))) "tempo marks are sorted before minting")
+    (ok (eq :segno (jump-mark-kind (find-element s "jm-7"))) "jump marks too")
+    (ok (eq :accent (articulation-kind (find-element s "ar-e"))) "and articulations")
+    (ok (equal "a" (lyric-text (find-element s "ly-i"))) "verse 1 comes first")
+    (ok (eq :major (chord-symbol-quality (anchor-symbol (find-element s "h-x"))))
         "the track is sorted before minting")
-    (ok (typep (find-element s "e-a") 'chord-event))
-    (ok (typep (find-element s "n-c") 'chord-note))))
+    (ok (typep (find-element s "e-k") 'chord-event))
+    (ok (typep (find-element s "n-m") 'chord-note))
+    (ok (equal "c5-next" (tie-end (find-element s "ti-n"))))
+    (ok (typep (find-element s "br-o") 'breath-mark))
+    (ok (typep (find-element s "en-6") 'ending))
+    (ok (typep (find-element s "rh-2") 'rehearsal-mark))))
 
 (deftest minting-is-deterministic
   (let ((a (id-less-score))
@@ -102,8 +130,8 @@ and two chord symbols given out of track order."
 
 (defun mini-score (&rest keys)
   "A one-bar score whose elements are given ids by KEYS: :MEASURE, :PART,
-:STAFF, :VOICE, :NOTE, :REST (NIL for none), plus :ID-COUNTER and :TIE (the
-note's tie)."
+:STAFF, :VOICE, :NOTE, :REST (NIL for none), plus :ID-COUNTER and :TIE (the END
+of an id-less tie on the note)."
   (destructuring-bind (&key measure part staff voice note rest tie (id-counter 0)) keys
     (make-score
      :id-counter id-counter
@@ -114,7 +142,8 @@ note's tie)."
                    :voices (list (make-voice
                                   :id voice
                                   :measures (list (list (make-note-event :id note :pitch (p "C4")
-                                                                         :duration 1/4 :tie tie)
+                                                                         :duration 1/4
+                                                                         :tie (and tie (make-tie :end tie)))
                                                         (make-rest-event :id rest
                                                                          :duration 1/4))))))))))
 
@@ -132,7 +161,7 @@ note's tie)."
       '("m-2t" "p-2u" "st-2v" "v-2w" "e-2x" "e-2y") 106)
      ("a counter below a serial" '(:id-counter 3 :note "v-9")
       '("m-a" "p-b" "st-c" "v-d" "v-9" "e-e") 14)
-     ("references don't count" '(:note "a" :tie "e-25") '("m-1" "p-2" "st-3" "v-4" "a" "e-5") 5))
+     ("references don't count" '(:note "a" :tie "e-25") '("m-1" "p-2" "st-3" "v-4" "a" "ti-5" "e-6") 6))
   (let ((s (apply #'mini-score keys)))
     (ok (equal expected (ids (score-elements s))) label)
     (ok (= counter (score-id-counter s)) label)))
@@ -149,7 +178,7 @@ note's tie)."
 
 (deftest-parametrize find-slice-finds-measure-and-element
     ((measure element)
-     ("m-1" "p-4") ("m-2" "p-h") ("m-3" "st-j") ("m-2" "v-13") ("m-1" "v-6"))
+     ("m-1" "p-5") ("m-3" "p-o") ("m-4" "st-q") ("m-3" "v-1e") ("m-1" "v-7"))
   (let ((s (fixture-score "sc0-keyboard")))
     (multiple-value-bind (m e) (find-slice s (slice-id measure element))
       (ok (eq (find-element s measure) m))
@@ -157,8 +186,8 @@ note's tie)."
 
 (deftest-parametrize find-slice-rejects
     ((text)
-     ("m-2.e-c") ("m-2.m-3") ("p-h.m-2") ("e-8.p-h") ("m-9.p-h") ("m-2.p-zz") ("m-2") ("p-h")
-     ("m-2.p-h.st-j") (".p-h") ("m-2.") (""))
+     ("m-3.e-f") ("m-3.m-4") ("p-o.m-3") ("e-9.p-o") ("tm-2.p-o") ("m-3.dy-c") ("m-9.p-o")
+     ("m-3.p-zz") ("m-3") ("p-o") ("m-3.p-o.st-q") (".p-o") ("m-3.") (""))
   (let ((s (fixture-score "sc0-keyboard")))
     (ok (null (find-slice s text :errorp nil)) text)
     (ok (equal text (let ((c (signalled (lambda () (find-slice s text)))))
@@ -179,7 +208,8 @@ note's tie)."
     (ok (eq (fset:@ (score-parts s) 1) (fset:@ (score-parts c) 1))
         "an element that had its id is the same object")
     (ok (eq (fset:@ (score-measure-map s) 0) (fset:@ (score-measure-map c) 0)))
-    (ok (eq (find-element s "n-w") (find-element c "n-w")))))
+    (ok (eq (find-element s "n-15") (find-element c "n-15")))
+    (ok (eq (find-element s "ti-11") (find-element c "ti-11")))))
 
 (deftest copy-score-mints-from-the-counter
   (let* ((s (fixture-score "sc0-pickup"))
@@ -188,48 +218,53 @@ note's tie)."
                                            :symbol (make-chord-symbol :root (pc "G")
                                                                       :quality :major)))
          (c (copy-score s :chord-symbols (list anchor))))
-    (ok (= 26 n))
-    (ok (equal "h-r" (element-id (fset:@ (score-chord-symbols c) 0))))
-    (ok (= 27 (score-id-counter c)))
+    (ok (= 28 n))
+    (ok (equal "h-t" (element-id (fset:@ (score-chord-symbols c) 0))))
+    (ok (= 29 (score-id-counter c)))
     (ok (null (element-id anchor)) "the argument itself is not changed")
-    (ok (equal (ids (score-elements s)) (remove "h-r" (ids (score-elements c)) :test #'string=)))))
+    (ok (equal (ids (score-elements s)) (remove "h-t" (ids (score-elements c)) :test #'string=)))))
 
 (deftest a-new-element-inside-an-old-one
-  ;; Put an id-less grace note in front of bar 1 of the pickup fixture's voice.
+  ;; Put an id-less grace note with an id-less articulation in front of bar 1
+  ;; of the pickup fixture's voice.
   (let* ((s (fixture-score "sc0-pickup"))
          (part (fset:@ (score-parts s) 0))
          (voice (first (part-voices part)))
-         (grace (make-note-event :pitch (p "A4") :duration 1/8 :grace :acciaccatura))
+         (grace (make-note-event :pitch (p "A4") :duration 1/8 :grace :acciaccatura
+                                 :articulations (list (make-articulation :kind :accent))))
          (measures (fset:with (voice-measures voice) 1
                               (fset:with-first (fset:@ (voice-measures voice) 1) grace)))
          (new-voice (make-voice :id (element-id voice) :measures measures))
          (new-part (make-part :id (element-id part) :name (part-name part)
                               :staves (part-staves part) :voices (list new-voice)))
          (c (copy-score s :parts (list new-part))))
-    (ok (equal "e-r" (element-id (find-element c "e-r"))))
-    (ok (typep (find-element c "e-r") 'note-event))
-    (ok (eq (find-element c "v-8") (element-parent c "e-r")))
-    (ok (equal '(1 . 0) (element-position c "e-r")))
-    (ok (equal (ids (score-elements s)) (remove "e-r" (ids (score-elements c)) :test #'string=))
+    (ok (typep (find-element c "e-t") 'note-event))
+    (ok (typep (find-element c "ar-u") 'articulation))
+    (ok (eq (find-element c "e-t") (element-parent c "ar-u")))
+    (ok (eq (find-element c "v-9") (element-parent c "e-t")))
+    (ok (equal '(1 . 0) (element-position c "e-t")))
+    (ok (equal (ids (score-elements s))
+               (remove-if (lambda (id) (member id '("e-t" "ar-u") :test #'string=))
+                          (ids (score-elements c))))
         "every other element keeps its id")
-    (ok (eq (find-element s "e-d") (find-element c "e-d")) "untouched events are shared")))
+    (ok (eq (find-element s "e-e") (find-element c "e-e")) "untouched events are shared")))
 
 (deftest serials-are-never-reused
   (let* ((s (fixture-score "sc0-pickup"))
          (without (copy-score s :spanners '()))
-         (slur (make-spanner :kind :slur :start "e-d" :end "e-f"))
+         (slur (make-spanner :kind :slur :start "e-e" :end "e-g"))
          (again (copy-score without :spanners (list slur))))
-    (ok (null (find-element without "sp-q" :errorp nil)))
-    (ok (= 26 (score-id-counter without)) "removing an element keeps the counter")
-    (ok (equal "sp-r" (element-id (fset:@ (score-spanners again) 0))))
+    (ok (null (find-element without "sp-s" :errorp nil)))
+    (ok (= 28 (score-id-counter without)) "removing an element keeps the counter")
+    (ok (equal "sp-t" (element-id (fset:@ (score-spanners again) 0))))
     (ok (not (score-equal s again)))))
 
 (deftest serialization-keeps-ids-and-the-counter
   (let* ((s (copy-score (fixture-score "sc0-pickup") :spanners '()))
          (back (sexp-to-score (score-to-sexp s)))
-         (slur (make-spanner :kind :slur :start "e-d" :end "e-f")))
-    (ok (= 26 (getf (rest (score-to-sexp s)) :id-counter)))
-    (ok (= 26 (score-id-counter back)))
+         (slur (make-spanner :kind :slur :start "e-e" :end "e-g")))
+    (ok (= 28 (getf (rest (score-to-sexp s)) :id-counter)))
+    (ok (= 28 (score-id-counter back)))
     (ok (equal (ids (score-elements s)) (ids (score-elements back))))
     (ok (score-equal s back))
     (ok (equal (element-id (fset:@ (score-spanners (copy-score s :spanners (list slur))) 0))
@@ -264,36 +299,61 @@ note's tie)."
 
 (deftest-parametrize element-parents
     ((name id parent)
-     ("sc0-keyboard" "n-m" "e-l")
-     ("sc0-keyboard" "e-l" "v-k")
-     ("sc0-keyboard" "v-k" "p-h")
-     ("sc0-keyboard" "st-j" "p-h")
-     ("sc0-keyboard" "e-15" "v-13")
-     ("sc0-keyboard" "p-h" nil)
-     ("sc0-keyboard" "m-2" nil)
-     ("sc0-keyboard" "sp-1c" nil)
-     ("sc0-pickup" "ly-e" "e-d")
+     ("sc0-keyboard" "n-t" "e-s")
+     ("sc0-keyboard" "e-s" "v-r")
+     ("sc0-keyboard" "v-r" "p-o")
+     ("sc0-keyboard" "st-q" "p-o")
+     ("sc0-keyboard" "e-1g" "v-1e")
+     ("sc0-keyboard" "ti-11" "n-10")
+     ("sc0-keyboard" "ti-1l" "e-1k")
+     ("sc0-keyboard" "ar-h" "e-g")
+     ("sc0-keyboard" "br-j" "e-g")
+     ("sc0-keyboard" "dy-c" "e-a")
+     ("sc0-keyboard" "fe-n" "e-m")
+     ("sc0-keyboard" "tm-2" "m-1")
+     ("sc0-keyboard" "p-o" nil)
+     ("sc0-keyboard" "m-3" nil)
+     ("sc0-keyboard" "sp-1o" nil)
+     ("sc0-pickup" "ly-f" "e-e")
+     ("sc0-jumps" "jm-8" "m-7")
+     ("sc0-jumps" "rh-d" "m-b")
+     ("sc0-repeats-voltas" "en-5" "m-4")
      ("sc0-chords-under-rests" "h-o" nil))
   (let ((s (fixture-score name)))
     (ok (equal parent (let ((e (element-parent s id))) (and e (element-id e)))))))
 
+(defun tree-children (element)
+  "ELEMENT's children in document order, read here with the accessors, apart
+from the implementation's walk."
+  (flet ((one (x) (and x (list x))))
+    (typecase element
+      (measure-info (append (one (measure-info-ending element)) (measure-info-jump element)
+                            (one (measure-info-rehearsal element)) (measure-info-tempo element)))
+      (part (append (part-staves element) (part-voices element)))
+      (voice (loop for vm in (seq-list (voice-measures element)) append (seq-list vm)))
+      (event (append (typecase element
+                       (chord-event (chord-event-notes element))
+                       (note-event (one (note-tie element))))
+                     (and (typep element 'sounding-event) (event-articulations element))
+                     (one (event-fermata element))
+                     (and (typep element 'sounding-event) (one (event-breath-mark element)))
+                     (one (event-dynamic element))
+                     (event-lyrics element)))
+      (chord-note (one (note-tie element)))
+      (t '()))))
+
 (deftest-parametrize parents-match-the-tree
     ((name) :rows +fixture-scores+)
-  ;; Walk the tree with the accessors and compare every parent link.
+  ;; Walk the tree with the accessors; compare every parent link and the order.
   (let* ((s (fixture-score name))
-         (expected '()))
-    (fset:do-seq (part (score-parts s))
-      (dolist (staff (part-staves part)) (push (cons staff part) expected))
-      (dolist (voice (part-voices part))
-        (push (cons voice part) expected)
-        (fset:do-seq (vm (voice-measures voice))
-          (fset:do-seq (event vm)
-            (push (cons event voice) expected)
-            (when (typep event 'chord-event)
-              (dolist (n (chord-event-notes event)) (push (cons n event) expected)))
-            (dolist (l (event-lyrics event)) (push (cons l event) expected))))))
-    (ok (every (lambda (pair) (eq (cdr pair) (element-parent s (element-id (car pair)))))
-               expected))
-    (ok (every (lambda (e) (null (element-parent s (element-id e))))
-               (append (seq-list (score-measure-map s)) (seq-list (score-parts s))
-                       (seq-list (score-chord-symbols s)) (seq-list (score-spanners s)))))))
+         (pairs '())
+         (order '()))
+    (labels ((visit (element parent)
+               (push element order)
+               (push (cons element parent) pairs)
+               (dolist (child (tree-children element)) (visit child element))))
+      (dolist (top (append (seq-list (score-measure-map s)) (seq-list (score-parts s))
+                           (seq-list (score-chord-symbols s)) (seq-list (score-spanners s))))
+        (visit top nil)))
+    (ok (every (lambda (pair) (eq (cdr pair) (element-parent s (element-id (car pair))))) pairs))
+    (ok (equal (nreverse order) (score-elements s)) "SCORE-ELEMENTS is this walk")))

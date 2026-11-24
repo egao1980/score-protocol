@@ -5,7 +5,7 @@
 ;;;; the default report threshold 0.8. Hand-built, MIT.
 (:score
  :metadata (:title "Recognised Page")
- :id-counter 21
+ :id-counter 22
  :measures
  ((:measure :id "m-1" :time "3/4" :key "F major"
    :provenance (:source :omr :backend "omr-example" :page 1 :bbox (40 120 600 180))
@@ -37,15 +37,15 @@
                        (:chord-note :id "n-g" :pitch "C5" :confidence 1))
         :duration 1/2 :confidence 0.45)
        (:rest :id "e-h" :duration 1/4 :confidence 0))
-      ((:note :id "e-i" :pitch "F4" :duration 3/4 :fermata :normal
+      ((:note :id "e-i" :pitch "F4" :duration 3/4 :fermata (:fermata :id "fe-j")
         :provenance (:source :transcription :backend "pitch-tracker"
                      :time-range (4.5 6.75)))))))
    :provenance (:source :omr :backend "omr-example" :page 1)
    :confidence 0.97))
  :chord-symbols
- ((:chord-symbol :id "h-j" :bar 1 :offset 0 :symbol (:root "F" :quality :major)
+ ((:chord-symbol :id "h-k" :bar 1 :offset 0 :symbol (:root "F" :quality :major)
    :confidence 0.7)
-  (:chord-symbol :id "h-k" :bar 2 :offset 1/2 :symbol (:root "C" :quality :dominant-7)
+  (:chord-symbol :id "h-l" :bar 2 :offset 1/2 :symbol (:root "C" :quality :dominant-7)
    :confidence 0.85))
- :spanners ((:spanner :id "sp-l" :kind :slur :start "e-7" :end "e-b"
+ :spanners ((:spanner :id "sp-m" :kind :slur :start "e-7" :end "e-b"
              :confidence 0.3)))

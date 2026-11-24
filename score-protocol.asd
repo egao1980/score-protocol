@@ -3,7 +3,7 @@
   :description "CLOS score model for cl-stack: parts, measures, voices, lyrics, chord symbols, edit operations and views"
   :author "egao1980"
   :license "MIT"
-  :depends-on ((:version "music-theory" "0.4.0") "fset")
+  :depends-on ((:version "music-theory" "0.5.0") "fset")
   :pathname "src"
   :serial t
   :components ((:file "package")
@@ -21,7 +21,7 @@
   :in-order-to ((test-op (test-op "score-protocol/tests"))))
 
 (defsystem "score-protocol/tests"
-  :depends-on ("score-protocol" "rove")
+  :depends-on ("score-protocol" (:version "rove" "0.11.1"))
   :pathname "tests"
   :serial t
   :components ((:file "package")

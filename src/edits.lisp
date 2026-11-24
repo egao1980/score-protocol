@@ -106,8 +106,8 @@
 ;;;;                          SCORE-INVARIANT-VIOLATION.
 ;;;; INVALID-EDIT itself covers the rest: an id of the wrong kind of element, a
 ;;;; given id the score already carries, a tuplet that would need splitting, a
-;;;; pitch beyond two accidentals or a key beyond seven, and each operation's
-;;;; own refusals. Every one is signalled inside the restarts SKIP-EDIT, which
+;;;; pitch beyond two accidentals, and each operation's own refusals. Every one
+;;;; is signalled inside the restarts SKIP-EDIT, which
 ;;;; makes APPLY-EDIT return (values score <empty change set>), and USE-VALUE,
 ;;;; which takes an operation and returns (apply-edit score that-operation).
 ;;;; MEASURE-OVERFULL adds REFLOW. TYPE-ERRORs from element constructors and

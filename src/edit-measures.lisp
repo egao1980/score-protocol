@@ -94,27 +94,34 @@
 ;;;; of INTERVAL and TO-KEY must be given (INVALID-EDIT), FROM must not come
 ;;;; after TO (EDIT-POSITION-INVALID, POSITION = TO's bar), and PARTS must name
 ;;;; parts.
-;;;;   The interval I is INTERVAL, or, with TO-KEY, the interval from the tonic
-;;;;   of the key in force at FROM, placed in octave 4, to TO-KEY's tonic placed
-;;;;   so that I has between -3 and 3 steps: C to G is a perfect fourth down, C to
-;;;;   F a perfect fourth up, C to F# an augmented fourth up, C to Gb an
-;;;;   augmented fourth down, C# to Db a diminished second up, D to Db no steps
-;;;;   and one semitone down. (This is music-theory MT4's TRANSPOSE-TO-KEY.)
-;;;;   Modes play no part.
-;;;;   Every note event and chord note of the voices of PARTS in the bars FROM
-;;;;   to TO, grace notes included, gets the pitch (transpose-pitch pitch I),
-;;;;   spelled exactly by the interval, its accidental display kept. When the
-;;;;   scope covers every part of the score, the score-wide things transpose
-;;;;   too: each anchor in those bars gets (transpose-chord-symbol symbol I), so
-;;;;   its root and bass are respelled (N.C. stays N.C., TEXT becomes NIL); each
-;;;;   measure of the range with a KEY of its own gets the key with the same
-;;;;   mode whose tonic is the old tonic moved by I; FROM's measure, when it has
-;;;;   no KEY of its own, gets the key in force there, moved by I; and the
-;;;;   measure after TO keeps its signatures. With some parts only, keys and
-;;;;   chord symbols stay: they belong to the whole score.
-;;;;   A pitch, root or bass beyond two accidentals, or a key beyond seven,
-;;;;   signals INVALID-EDIT. A tie from inside the range to a note outside it
-;;;;   breaks and goes with the cascade.
+;;;;   Moving. The spelling is music-theory's; nothing here re-derives it.
+;;;;   With INTERVAL, a pitch p moves to (transpose-pitch p INTERVAL), a chord
+;;;;   symbol c to (transpose-chord-symbol c INTERVAL), and a key tonic t (a
+;;;;   PITCH-CLASS-NAME) to the class of (transpose-pitch t-in-octave-4
+;;;;   INTERVAL). With TO-KEY, let F be the key in force at FROM: p moves to
+;;;;   (transpose-to-key p F TO-KEY), c to (transpose-chord-symbol c (list F
+;;;;   TO-KEY)) and t to (transpose-to-key t F TO-KEY) (MT4: the letter moves at
+;;;;   most three steps, roots and basses respell as notes do, modes play no
+;;;;   part). Moving a key K keeps its mode and moves its tonic.
+;;;;   Notes. Every note event and chord note of the voices of PARTS in the bars
+;;;;   FROM to TO, grace notes included, moves; its accidental display is kept.
+;;;;   With some parts only, that is all: keys and chord symbols belong to the
+;;;;   whole score and stay.
+;;;;   Keys and chord symbols, when the scope covers every part. Each measure m
+;;;;   of the range has the key K in force there; its MOVED KEY is K', and its
+;;;;   TARGET key T is (choose-enharmonic-key K' :max-accidentals 7): K' itself
+;;;;   when K' is one of the 30 keys, else the one of them that sounds like it.
+;;;;   Each measure of the range with a KEY of its own gets T, and FROM's
+;;;;   measure gets its T when it has none. Each anchor in the range moves; each
+;;;;   note moves; and where T differs from K', both are then respelled from K'
+;;;;   to T: (transpose-chord-symbol c (list K' T)) and (transpose-to-key p K'
+;;;;   T), the same sounds spelled for T. So G major up an augmented unison is
+;;;;   Ab major, with the notes spelled for Ab major, not G# major with eight
+;;;;   sharps. The measure after TO keeps its signatures. Anchors lose their
+;;;;   TEXT (TRANSPOSE-CHORD-SYMBOL); N.C. stays N.C.
+;;;;   A pitch, root or bass beyond two accidentals signals INVALID-EDIT. A tie
+;;;;   from inside the range to a note outside it breaks and goes with the
+;;;;   cascade.
 
 (in-package #:score-protocol)
 

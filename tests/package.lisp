@@ -205,9 +205,3 @@ confidence an edit gives (src/edits.lisp): test rows stay short."
                                   (return-from found (and (find-restart restart c) t))))))
       (funcall thunk)
       nil)))
-
-
-(defun quoted-rows (rows)
-  "ROWS with every value quoted: DEFTEST-PARAMETRIZE splices :ROWS values into
-code, so a list value must arrive as (QUOTE list)."
-  (mapcar (lambda (row) (mapcar (lambda (value) (list 'quote value)) row)) rows))

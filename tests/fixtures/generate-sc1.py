@@ -11,8 +11,9 @@ Then music21 computes, from the fixture scores:
   sc1-transposed.sexp  (fixture op pitches keys anchors): every note and chord
                        note after Score.transpose, in document order; the keys
                        of the measures that have one; chord-symbol roots and
-                       basses. A TO-KEY row's interval is chosen here, by the
-                       rule of src/edit-measures.lisp written in Python.
+                       basses. A TO-KEY row moves the score by the interval
+                       listed with it, the one music-theory's TRANSPOSE-TO-KEY
+                       takes between the two tonics (the suite checks that).
   sc1-unfolded.sexp    (:cases (name source spec order) :fixtures (fixture
                        source-measure-ids notes)): Part.expandRepeats on
                        one-note navigation scores and on the fixtures with
@@ -167,29 +168,18 @@ def build(score_node, chord_symbols=False, navigation=False):
 
 # --- transposition ----------------------------------------------------------
 
-LETTERS = "CDEFGAB"
-
-
-def key_interval(from_tonic, to_tonic):
-    """The interval of src/edit-measures.lisp from one tonic to another: FROM in
-    octave 4, TO placed so the letter moves at most three steps."""
-    from music21 import pitch, interval
-    start = pitch.Pitch(m21_pitch(from_tonic + "4"))
-    for octave in (3, 4, 5):
-        end = pitch.Pitch(m21_pitch(to_tonic + str(octave)))
-        steps = (LETTERS.index(end.step) + 7 * end.octave) - (LETTERS.index(start.step) + 7 * start.octave)
-        if -3 <= steps <= 3:
-            return interval.Interval(start, end)
-    raise ValueError((from_tonic, to_tonic))
-
-
 TRANSPOSE_ROWS = [
     ("sc0-satb", "M2"), ("sc0-chords-under-rests", "m2"), ("sc0-chords-under-rests", "-m3"),
     ("sc0-key-change", "P4"), ("sc0-carol-6-8", "-M2"), ("sc0-keyboard", "P5"),
     ("sc0-pickup", "m2"), ("sc0-repeats-voltas", "-P4"), ("sc0-jumps", "M3"),
-    ("sc0-three-verses", "d1"), ("sc0-omr-result", "P8"), ("sc1-open-score", "-M2"),
-    ("sc0-chords-under-rests", ("to-key", "Eb major")), ("sc0-satb", ("to-key", "E major")),
-    ("sc0-jumps", ("to-key", "D minor")), ("sc0-key-change", ("to-key", "Db major"))]
+    ("sc0-three-verses", "d1"), ("sc0-three-verses", "m2"), ("sc0-omr-result", "P8"),
+    ("sc1-open-score", "-M2"),
+    # TO-KEY rows: music21 moves the score by the interval music-theory's
+    # TRANSPOSE-TO-KEY takes between the tonics (data here, not a rule).
+    ("sc0-chords-under-rests", ("to-key", "Eb major", "-M2")),
+    ("sc0-satb", ("to-key", "E major", "-m3")),
+    ("sc0-jumps", ("to-key", "D minor", "-M2")),
+    ("sc0-key-change", ("to-key", "Db major", "m2"))]
 
 
 def transposed_row(name, spec):
@@ -198,8 +188,7 @@ def transposed_row(name, spec):
     sc, bars, objects, _ = build(node, chord_symbols=True)
     _, s = plist(node)
     if isinstance(spec, tuple):
-        first_key = plist(items(s["measures"])[0])[1]["key"].value
-        iv = key_interval(first_key.split(" ")[0], spec[1].split(" ")[0])
+        iv = interval.Interval(spec[2])
         form = [":transpose", ":to-key", spec[1]]
     else:
         iv = interval.Interval(spec)

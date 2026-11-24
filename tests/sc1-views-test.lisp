@@ -69,7 +69,7 @@ and holds one C4."
 music21 or (source :rules) from the rules.")
 
 (deftest-parametrize unfold-orders
-    ((name source spec order) :rows (quoted-rows +unfold-cases+))
+    ((name source spec order) :rows +unfold-cases+)
   (declare (ignorable source))
   (multiple-value-bind (view id-map) (unfold (nav-score spec))
     (ok (equal (mapcar (lambda (i) (format nil "m~D" i)) order) (view-sources view id-map)) name)
@@ -79,7 +79,7 @@ music21 or (source :rules) from the rules.")
   "(fixture source-measure-ids notes), from music21's expandRepeats.")
 
 (deftest-parametrize unfold-fixtures
-    ((name sources notes) :rows (quoted-rows +unfold-fixtures+))
+    ((name sources notes) :rows +unfold-fixtures+)
   (multiple-value-bind (view id-map passes) (unfold (fixture-score name))
     (ok (equal sources (view-sources view id-map)) "the playback order")
     (ok (equal notes (sounding-notes view)) "the music, note by note")
@@ -255,7 +255,7 @@ music21 or (source :rules) from the rules.")
   "(fixture id notes): the notes of a part or voice, from music21.")
 
 (deftest-parametrize extract-oracle
-    ((name id notes) :rows (quoted-rows +parts+))
+    ((name id notes) :rows +parts+)
   (multiple-value-bind (view id-map) (extract-part (fixture-score name) id)
     (ok (equal notes (sounding-notes view)))
     (ok (= 1 (fset:size (score-parts view))))

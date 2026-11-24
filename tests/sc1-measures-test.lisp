@@ -251,7 +251,7 @@
   "(fixture op-form pitches keys anchors), computed with music21.")
 
 (deftest-parametrize transpose-oracle
-    ((name form pitches keys anchors) :rows (quoted-rows +transposed+))
+    ((name form pitches keys anchors) :rows +transposed+)
   (multiple-value-bind (score lists) (edit (fixture-score name) form)
     (ok (equal pitches (note-pitches score)) "every note, spelled by the interval")
     (ok (equal keys (own-keys score)) "key signatures")
@@ -281,10 +281,38 @@
      ("sc0-satb" "Gb major" "d1")
      ("sc0-jumps" "D minor" "-M2")
      ("sc0-key-change" "Db major" "m2"))
-  (let ((source (fixture-score name)))
-    (ok (score-equal (edit source `(:transpose :interval ,interval))
-                     (edit source `(:transpose :to-key ,key)))
-        (format nil "~A to ~A is ~A" name key interval))))
+  (let* ((source (fixture-score name))
+         (moved (edit source `(:transpose :to-key ,key)))
+         (from (bar-key source (score-first-bar source))))
+    (ok (score-equal (edit source `(:transpose :interval ,interval)) moved)
+        (format nil "~A to ~A is ~A" name key interval))
+    (ok (every (lambda (row)
+                 (equal (second row)
+                        (pitch-name (transpose-to-key (note-pitch (find-element source (first row)))
+                                                      from (parse-key key)))))
+               (note-pitches moved))
+        "every note is where music-theory's TRANSPOSE-TO-KEY puts it")))
+
+(deftest transpose-past-seven-accidentals
+  (let* ((source (fixture-score "sc0-three-verses"))
+         (score (edit source '(:transpose :interval "A1"))))
+    (ok (equal '(("m-1" "Ab major")) (own-keys score))
+        "G# major has eight sharps: CHOOSE-ENHARMONIC-KEY gives Ab major")
+    (ok (equal '("Ab4" "G4") (mapcar (lambda (id) (pitch-name (note-pitch (find-element score id))))
+                                     '("e-8" "e-g")))
+        "the notes are spelled for Ab major")
+    (ok (score-equal score (edit source '(:transpose :interval "m2")))
+        "the same as a minor second up")
+    (ok (null (check-score score))))
+  (let ((score (edit (fixture-score "sc0-key-change") '(:transpose :interval "A1"))))
+    (ok (equal '(("m-1" "C# major") ("m-4" "Eb major") ("m-9" "B major")) (own-keys score))
+        "key by key: only D# major is past seven")
+    (ok (equal '(("e-f" "C#4") ("e-g" "E#4") ("e-h" "G#4") ("e-i" "C#5") ("e-j" "B#4") ("e-k" "G#4")
+                 ("e-l" "G4") ("e-m" "Bb4") ("e-n" "Eb5") ("e-o" "F5") ("e-p" "D5") ("e-q" "Bb4")
+                 ("e-r" "B4") ("e-s" "D#5") ("e-t" "F#5"))
+               (note-pitches score))
+        "the notes of the D major bars are spelled for Eb major")
+    (ok (null (check-score score)))))
 
 (deftest transpose-scopes
   (let* ((source (fixture-score "sc0-keyboard"))
@@ -318,7 +346,6 @@
 
 (deftest-parametrize transpose-refusals
     ((label name form type)
-     ("a key beyond seven sharps" "sc0-three-verses" '(:transpose :interval "A1") 'invalid-edit)
      ("a pitch beyond two accidentals" :base
       '(:composite :ops ((:set-pitch :id "a" :pitch "F##4") (:transpose :interval "A1")))
       'invalid-edit)

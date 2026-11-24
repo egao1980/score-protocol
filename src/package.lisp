@@ -8,7 +8,8 @@
   (:documentation "The score model, stable element ids, provenance and confidence, the
 measure map and positions, validation and the canonical s-expression form (SC0);
 the edit-operation algebra and the condensed, unfolded and extracted views
-(SC1). Formats live in backends (score-backend-musicxml, score-backend-midi).")
+(SC1); drafts and the score builder, refs to elements not yet minted (SC3).
+Formats live in backends (score-backend-musicxml, score-backend-midi).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:score-error #:score-error-reason
@@ -21,14 +22,19 @@ the edit-operation algebra and the condensed, unfolded and extracted views
    #:musicxml-unsupported #:musicxml-unsupported-element #:skip-element
    #:score-warning
    #:lossy-conversion #:lossy-conversion-format #:lossy-conversion-what
+   #:lossy-conversion-direction
    #:low-confidence-guess #:low-confidence-guess-element-id
    #:low-confidence-guess-what #:low-confidence-guess-confidence
    #:edit-target-missing #:edit-position-invalid
    #:measure-overfull #:measure-overfull-voice #:measure-overfull-bar
    #:measure-overfull-excess #:reflow
    #:edit-breaks-score
+   #:unresolved-reference #:unresolved-reference-key
    ;; Ids (SC0; see ids.lisp)
    #:valid-id-p #:slice-id #:find-slice
+   ;; Drafts and the score builder (SC3; see builder.lisp)
+   #:score-builder #:make-score-builder #:builder-ref #:builder-id
+   #:draft-ref #:draft-ref-key #:draft-ref-prefer
    ;; Provenance and the element base class (SC0)
    #:provenance #:make-provenance #:provenance-p
    #:provenance-source #:provenance-backend #:provenance-page

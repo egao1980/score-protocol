@@ -25,11 +25,16 @@
 ;;;; map), so lookups don't walk the score. An element that had its id, and
 ;;;; everything inside it too, is stored as the same (EQ) object; an element
 ;;;; that gets a minted id, or contains one that does, is rebuilt with its other
-;;;; slots unchanged.
+;;;; slots unchanged. The elements may form a draft (SC3, builder.lisp): ids and
+;;;; tie and spanner references that are DRAFT-REFs are resolved in the same
+;;;; call, and an element that carries or refers to one is rebuilt like an
+;;;; element that gets a minted id. The score holds no refs.
 ;;;;
 ;;;; COPY-SCORE score &key metadata measures parts chord-symbols spanners is
 ;;;; MAKE-SCORE with each omitted argument taken from SCORE, and :ID-COUNTER
-;;;; (score-id-counter score). Unchanged parts of the score are shared.
+;;;; (score-id-counter score). Unchanged parts of the score are shared. So new
+;;;; elements added to a score with COPY-SCORE may be a draft too: their
+;;;; references may name SCORE's ids (strings) or refs.
 ;;;;
 ;;;; Lookups:
 ;;;;   SCORE-ELEMENTS score: a fresh list of every element, in document order.
@@ -182,6 +187,11 @@
      (:end spanner-end :always t)))
   "The canonical forms of the elements (sexp.lisp), as data: see above.")
 
+(defparameter +reference-keys+
+  '((:tie :end) (:spanner :start :end))
+  "Element kind → the keys of its fields that hold references (ids.lisp:
+References), where a draft may hold a DRAFT-REF (builder.lisp). Grammar data.")
+
 (defstruct (%field (:constructor %make-field (key reader codec initarg default always))
                    (:copier nil) (:predicate nil))
   (key nil :read-only t)
@@ -191,15 +201,18 @@
   (default nil :read-only t)
   (always nil :read-only t))
 
-(defstruct (%form-row (:constructor %make-form-row (kind class constructor fields children))
+(defstruct (%form-row (:constructor %make-form-row
+                          (kind class constructor fields children references))
                       (:copier nil) (:predicate nil))
   "A parsed +ELEMENT-FORMS+ row. CHILDREN holds the child fields of FIELDS, in
-document order."
+document order; REFERENCES the fields that hold references (+REFERENCE-KEYS+),
+in row order."
   (kind nil :read-only t)
   (class nil :read-only t)
   (constructor nil :read-only t)
   (fields '() :read-only t)
-  (children '() :read-only t))
+  (children '() :read-only t)
+  (references '() :read-only t))
 
 (defun %parse-field (spec)
   (destructuring-bind (key reader &key (codec :value) (initarg key) default always) spec
@@ -216,7 +229,10 @@ document order."
                                   specs
                                   '((:provenance element-provenance :codec :provenance)
                                     (:confidence element-confidence))))))
-      (%make-form-row kind class constructor fields (remove-if-not #'%child-field-p fields)))))
+      (%make-form-row kind class constructor fields
+                      (remove-if-not #'%child-field-p fields)
+                      (let ((keys (cdr (assoc kind +reference-keys+))))
+                        (remove-if-not (lambda (field) (member (%field-key field) keys)) fields))))))
 
 (defparameter +form-rows+ (mapcar #'%parse-form-row +element-forms+)
   "+ELEMENT-FORMS+ parsed, with the common fields added.")
@@ -250,21 +266,87 @@ document order."
         append (%field-children field (%field-value field element))))
 
 (defun %max-serial (elements)
-  "The largest serial among the ids of ELEMENTS and everything inside them, or
-0. References (tie ends, spanner endpoints) aren't ids of elements."
-  (let ((max 0))
+  "(values serial draft-p): the largest serial among the ids of ELEMENTS and
+everything inside them, or 0; and true when they form a draft, an id or a
+reference among them being a DRAFT-REF (builder.lisp). References (tie ends,
+spanner endpoints) aren't ids of elements."
+  (let ((max 0) (draft nil))
     (labels ((visit (element)
-               (let ((serial (%id-serial (element-id element))))
-                 (when (and serial (> serial max)) (setf max serial)))
-               (mapc #'visit (%element-children element))))
+               (let* ((id (element-id element))
+                      (serial (%id-serial id))
+                      (row (%element-row element)))
+                 (when (and serial (> serial max)) (setf max serial))
+                 (when (or (typep id 'draft-ref)
+                           (some (lambda (field) (typep (%field-value field element) 'draft-ref))
+                                 (%form-row-references row)))
+                   (setf draft t))
+                 (dolist (field (%form-row-children row))
+                   (mapc #'visit (%field-children field (%field-value field element)))))))
       (mapc #'visit elements))
-    max))
+    (values max draft)))
+
+;;; Drafts (builder.lisp, Resolution) --------------------------------------------
+;;; A MINT SLOT is an element whose id MAKE-SCORE gives: its ID is NIL or a
+;;; DRAFT-REF. %PLAN-DRAFT lists the ids of the slots in document order, the
+;;; order in which %MINT asks NEXT-ID for them, so the rebuild walk takes the
+;;; planned ids one by one and both walks mint the same ids in the same order.
+
+(defun %mint-slot-p (id)
+  "True when an element whose ID is ID gets its id from MAKE-SCORE."
+  (or (null id) (typep id 'draft-ref)))
+
+(defun %plan-draft (elements counter)
+  "Resolution steps 1 to 4 (builder.lisp) over the draft ELEMENTS, in document
+order, from COUNTER (the largest of :ID-COUNTER and the given serials).
+(values ids carried counter): IDS, the id of every mint slot in document order;
+CARRIED, an EQ hash table from each carried ref to its carrier's id; COUNTER,
+the counter after minting."
+  (let ((given (make-hash-table :test 'equal))
+        (carried (make-hash-table :test 'eq))
+        (slots '()))
+    ;; 1. The given ids, and the slots. A ref carried twice can't be resolved:
+    ;; no restart, before anything is minted.
+    (labels ((scan (element)
+               (let ((id (element-id element)))
+                 (cond ((not (%mint-slot-p id)) (setf (gethash id given) t))
+                       (t (when id
+                            (when (nth-value 1 (gethash id carried))
+                              (error 'unresolved-reference
+                                     :key (draft-ref-key id)
+                                     :reason "carried by more than one element"))
+                            (setf (gethash id carried) nil))
+                          (push element slots))))
+               (mapc #'scan (%element-children element))))
+      (mapc #'scan elements))
+    (setf slots (nreverse slots))
+    (let ((takes (make-hash-table :test 'eq))
+          (taken (make-hash-table :test 'equal)))
+      ;; 2. and 3. The first taker of a preferred id that no element is given
+      ;; takes it, and its serial counts as a given one.
+      (dolist (element slots)
+        (let* ((ref (element-id element))
+               (prefer (and ref (draft-ref-prefer ref))))
+          (when (and prefer (not (gethash prefer given)) (not (gethash prefer taken)))
+            (setf (gethash prefer taken) t
+                  (gethash ref takes) prefer)
+            (let ((serial (%id-serial prefer)))
+              (when (and serial (> serial counter)) (setf counter serial))))))
+      ;; 4. Every other slot is minted in its place.
+      (let ((ids (mapcar (lambda (element)
+                           (let* ((ref (element-id element))
+                                  (id (or (and ref (gethash ref takes))
+                                          (%minted-id (%id-prefix element) (incf counter)))))
+                             (when ref (setf (gethash ref carried) id))
+                             id))
+                         slots)))
+        (values ids carried counter)))))
 
 ;;; Minting and rebuilding -------------------------------------------------------
 
 (defun %rebuild (element row id replacements)
-  "A new instance of ELEMENT's class with ID, the child field values in the
-alist REPLACEMENTS (field . value), and every other slot value unchanged."
+  "A new instance of ELEMENT's class with ID, the field values in the alist
+REPLACEMENTS (field . value: children, or resolved references), and every other
+slot value unchanged."
   (apply #'make-instance (class-of element)
          (loop for field in (%form-row-fields row)
                for replacement = (assoc field replacements)
@@ -273,45 +355,53 @@ alist REPLACEMENTS (field . value), and every other slot value unchanged."
                                  (replacement (cdr replacement))
                                  (t (%field-value field element)))))))
 
-(defun %mint-list (elements next-id)
+(defun %mint-list (elements next-id &optional resolve)
   "(values elements changed-p): ELEMENTS minted in order; the same list when
 nothing in it changed."
   (let* ((changed nil)
          (result (mapcar (lambda (element)
-                           (multiple-value-bind (new new-p) (%mint element next-id)
+                           (multiple-value-bind (new new-p) (%mint element next-id resolve)
                              (when new-p (setf changed t))
                              new))
                          elements)))
     (if changed (values result t) (values elements nil))))
 
-(defun %mint-field (field value next-id)
+(defun %mint-field (field value next-id &optional resolve)
   "(values value changed-p) for the child FIELD's VALUE, minted in order."
   (ecase (car (%field-codec field))
-    (:form (if value (%mint value next-id) (values nil nil)))
-    (:forms (%mint-list value next-id))
+    (:form (if value (%mint value next-id resolve) (values nil nil)))
+    (:forms (%mint-list value next-id resolve))
     (:voice-measures
      ;; Replace only the voice measures that changed.
      (let ((result value) (changed nil))
        (dotimes (i (fset:size value) (values result changed))
          (multiple-value-bind (events events-p)
-             (%mint-list (fset:convert 'list (fset:@ value i)) next-id)
+             (%mint-list (fset:convert 'list (fset:@ value i)) next-id resolve)
            (when events-p
              (setf changed t
                    result (fset:with result i (fset:convert 'fset:seq events))))))))))
 
-(defun %mint (element next-id)
+(defun %mint (element next-id &optional resolve)
   "(values element changed-p): ELEMENT with an id from NEXT-ID (a function of
-the element) for it and for everything inside it that has none, in document
-order. The element takes its id before its children. ELEMENT itself (EQ) when
-nothing needed one; otherwise a rebuilt element. Never changes ELEMENT."
+the element) for it and for everything inside it that is a mint slot, in
+document order. The element takes its id before its children. RESOLVE, given
+for a draft, maps each DRAFT-REF a reference holds to its id. ELEMENT itself
+(EQ) when nothing needed an id or a resolved reference; otherwise a rebuilt
+element. Never changes ELEMENT."
   (let* ((old-id (element-id element))
-         (id (or old-id (funcall next-id element)))
+         (id (if (%mint-slot-p old-id) (funcall next-id element) old-id))
          (row (%element-row element))
          (replacements '()))
+    (when resolve
+      (dolist (field (%form-row-references row))
+        (let ((value (%field-value field element)))
+          (when (typep value 'draft-ref)
+            (push (cons field (funcall resolve value)) replacements)))))
     (dolist (field (%form-row-children row))
-      (multiple-value-bind (value changed) (%mint-field field (%field-value field element) next-id)
+      (multiple-value-bind (value changed)
+          (%mint-field field (%field-value field element) next-id resolve)
         (when changed (push (cons field value) replacements))))
-    (if (or (null old-id) replacements)
+    (if (or (not (eq id old-id)) replacements)
         (values (%rebuild element row id replacements) t)
         (values element nil))))
 
@@ -445,24 +535,49 @@ restart's value."
          (anchors (stable-sort (copy-list (fset:convert 'list chord-symbols))
                                #'%position< :key #'anchor-position))
          (spanners (fset:convert 'list spanners))
-         (counter (max id-counter (%max-serial (append measures parts anchors spanners)))))
-    (flet ((next-id (element)
-             (%minted-id (%id-prefix element) (incf counter)))
-           (mint-all (elements next-id)
-             (mapcar (lambda (element) (values (%mint element next-id))) elements)))
-      ;; LET* keeps score order: measures, parts, anchors, spanners.
-      (let* ((measures (mint-all measures #'next-id))
-             (parts (mint-all parts #'next-id))
-             (anchors (mint-all anchors #'next-id))
-             (spanners (mint-all spanners #'next-id)))
-        (make-instance 'score
-                       :metadata (%canonical-metadata metadata)
-                       :measure-map (fset:convert 'fset:seq measures)
-                       :parts (fset:convert 'fset:seq parts)
-                       :chord-symbols (fset:convert 'fset:seq anchors)
-                       :spanners (fset:convert 'fset:seq spanners)
-                       :id-counter counter
-                       :index (%build-index measures parts anchors spanners))))))
+         (all (append measures parts anchors spanners)))
+    (multiple-value-bind (serial draft-p) (%max-serial all)
+      (let ((counter (max id-counter serial))
+            (planned '())                ; a draft's slot ids, in document order
+            (carried nil)                ; a draft's ref → carrier id
+            (dangling (and draft-p (make-hash-table :test 'eq)))) ; ref → its USE-VALUE
+        ;; A draft is planned in full first: a reference may name a later carrier.
+        (when draft-p
+          (multiple-value-setq (planned carried counter) (%plan-draft all counter)))
+        (labels ((next-id (element)
+                   (if draft-p
+                       (pop planned)
+                       (%minted-id (%id-prefix element) (incf counter))))
+                 (resolve (ref)
+                   ;; Step 5, in document order of the referring element; one
+                   ;; condition per dangling ref.
+                   (multiple-value-bind (id found) (gethash ref carried)
+                     (if found
+                         id
+                         (multiple-value-bind (stored seen) (gethash ref dangling)
+                           (if seen
+                               stored
+                               (setf (gethash ref dangling) (%dangling-reference ref)))))))
+                 (mint-all (elements)
+                   (mapcar (lambda (element)
+                             (values (%mint element #'next-id (and draft-p #'resolve))))
+                           elements)))
+          ;; LET* keeps score order: measures, parts, anchors, spanners.
+          (let* ((measures (mint-all measures))
+                 (parts (mint-all parts))
+                 (anchors (mint-all anchors))
+                 (spanners (mint-all spanners))
+                 (score (make-instance 'score
+                                       :metadata (%canonical-metadata metadata)
+                                       :measure-map (fset:convert 'fset:seq measures)
+                                       :parts (fset:convert 'fset:seq parts)
+                                       :chord-symbols (fset:convert 'fset:seq anchors)
+                                       :spanners (fset:convert 'fset:seq spanners)
+                                       :id-counter counter
+                                       :index (%build-index measures parts anchors spanners))))
+            ;; Only a built score records its carriers' ids (builder.lisp).
+            (when draft-p (%record-ids carried))
+            score))))))
 
 (defun copy-score (score &key (metadata nil metadata-p) (measures nil measures-p)
                               (parts nil parts-p) (chord-symbols nil chord-symbols-p)

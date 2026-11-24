@@ -27,7 +27,12 @@
 ;;;; and the new score shares structure with it. APPLY-EDIT does this, in order:
 ;;;;  1. Preconditions: the ids OP names exist and are of the right kind, its
 ;;;;     positions lie in the score, and the rest each operation states. They
-;;;;     are checked in the order of OP's slots, before anything changes.
+;;;;     are checked in the order of OP's slots, before anything changes. First
+;;;;     of all (SC3), no element OP holds carries or refers to a DRAFT-REF
+;;;;     (builder.lisp): refs are for building, and an operation with one
+;;;;     signals INVALID-EDIT with REASON "draft reference". A COMPOSITE-EDIT's
+;;;;     members are checked each in its own step 1, so the condition names the
+;;;;     member.
 ;;;;  2. The change, by the operation's rules.
 ;;;;  3. Ids: every element without one is minted (Ids, below).
 ;;;;  4. The cascade: a tie or spanner of SCORE that the change broke is removed.
@@ -113,6 +118,20 @@
 ;;;; MEASURE-OVERFULL adds REFLOW. TYPE-ERRORs from element constructors and
 ;;;; music-theory's own conditions are not wrapped, except where an operation
 ;;;; says so.
+;;;; After REFLOW the operation being applied is the reflowed one: the same
+;;;; INSERT-EVENT with REFLOW true. Every condition signalled after the
+;;;; restart, the EDIT-BREAKS-SCORE of step 5 included, names that operation
+;;;; as OP (SC3), so (edit-reflow (invalid-edit-op c)) is true. A member of a
+;;;; COMPOSITE-EDIT is reflowed the same way; a failed check still names the
+;;;; composite.
+;;;;
+;;;; Cost. APPLY-EDIT runs CHECK-SCORE up to three times (on SCORE, after the
+;;;; change, after the cascade) and walks the whole score to share structure
+;;;; and compute the change set, so one edit is O(n) in the size of the score
+;;;; whatever its own size. That suits batch edits and edit logs. An editor
+;;;; that applies an edit per keystroke should measure it on its largest
+;;;; scores first (200 bars, four parts); checks scoped to the change set are
+;;;; possible future work, not part of this contract.
 ;;;;
 ;;;; INVERT-EDIT score op → an operation INV such that, with
 ;;;; (values after changes) = (apply-edit score op):
@@ -543,8 +562,10 @@ sharing: (values result change-set)."
 (defgeneric %edit-change (op score)
   (:documentation "Steps 1 to 3 of APPLY-EDIT: OP's preconditions in slot order,
 then its change. Returns the changed score with every new element minted
-(%BUILD-SCORE), or SCORE itself when nothing changes. Each operation class has a
-method in its own file."))
+(%BUILD-SCORE), or SCORE itself when nothing changes; when the REFLOW restart
+re-applied an INSERT-EVENT, the reflowed operation is a second value. Each
+operation class has a method in its own file; the :BEFORE method on every
+operation (the end of this file) is the draft-reference check of step 1."))
 
 (defun %read-operation ()
   "The :INTERACTIVE argument list of the USE-VALUE restarts: an operation form."
@@ -553,7 +574,10 @@ method in its own file."))
   (list (sexp-to-edit (read *query-io*))))
 
 (defmethod apply-edit ((score score) (op edit-operation))
-  (restart-case (%finish score (%edit-change op score) op)
+  ;; A second value that is an operation is the reflowed insert the REFLOW
+  ;; restart applied (edit-events.lisp): from then on it is the one applied.
+  (restart-case (multiple-value-bind (changed reflowed) (%edit-change op score)
+                  (%finish score changed (if (typep reflowed 'edit-operation) reflowed op)))
     (skip-edit ()
       :report "Skip this edit: return the score unchanged."
       (values score (make-change-set)))
@@ -574,7 +598,8 @@ method in its own file."))
       (%apply-member score other))))
 
 (defmethod %edit-change ((op composite-edit) (score score))
-  (reduce #'%apply-member (edit-ops op) :initial-value score))
+  ;; One value: a reflowed member never renames the composite.
+  (values (reduce #'%apply-member (edit-ops op) :initial-value score)))
 
 (defun compose-edits (&rest ops)
   "A COMPOSITE-EDIT of OPS with nested composites spliced in, or the single
@@ -887,3 +912,26 @@ constructor, fields (KEY READER &key CODEC INITARG DEFAULT ALWAYS).")
                    when value
                      nconc (list (%field-initarg field)
                                  (%decode-op-value (%field-codec field) value)))))))
+
+;;; Step 1: refs are for building ---------------------------------------------------
+
+(defun %op-elements (op)
+  "The elements OP is given, from the element codecs of its +EDIT-ROWS+ row. A
+COMPOSITE-EDIT holds operations, not elements: none."
+  (loop for field in (%edit-row-fields (%edit-row-of op))
+        for codec = (%field-codec field)
+        for value = (funcall (%field-reader field) op)
+        when (consp codec)
+          append (ecase (car codec)
+                   (:element (and value (list value)))
+                   (:elements (copy-list value))
+                   (:event-measures (loop for events in value append (copy-list events)))
+                   (:contents (loop for (nil . measures) in value
+                                    append (loop for events in measures
+                                                 append (copy-list events)))))))
+
+(defmethod %edit-change :before ((op edit-operation) (score score))
+  ;; First of every precondition, inside the restarts of whoever applies OP:
+  ;; APPLY-EDIT's, or a composite member's own.
+  (when (nth-value 1 (%max-serial (%op-elements op)))
+    (%refuse op "draft reference")))

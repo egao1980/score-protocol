@@ -83,8 +83,3 @@ in backends (score-backend-musicxml, score-backend-midi).")
    #:score-equal))
 
 (in-package #:score-protocol)
-
-(defun %sc0-pending (name)
-  "Contract stub for slice SC0. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "score-protocol SC0 pending: ~A" name))

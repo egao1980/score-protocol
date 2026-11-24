@@ -137,84 +137,194 @@
    (tempo :initarg :tempo :initform nil :reader tempo-mark-tempo)
    (text :initarg :text :initform nil :reader tempo-mark-text)))
 
+(defun %barline-p (object) (and (member object +barlines+) t))
+(defun %jump-kind-p (object) (and (member object +jumps+) t))
+(defun %passes-p (object) (%list-of-p object '(integer 1) t))
+(defun %jump-marks-p (object) (%list-of-p object 'jump-mark))
+(defun %tempo-marks-p (object) (%list-of-p object 'tempo-mark))
+
 (defun make-ending (&key id passes (measures 1) provenance confidence)
   "An ENDING played on PASSES, spanning MEASURES measures."
-  (declare (ignorable id passes measures provenance confidence))
-  (%sc0-pending 'make-ending))
+  (check-type passes (satisfies %passes-p) "a non-empty list of positive integers")
+  (check-type measures (integer 1))
+  (%make-element 'ending id provenance confidence
+                 :passes (sort (remove-duplicates (copy-list passes)) #'<)
+                 :measures measures))
 
 (defun make-jump-mark (&key id kind provenance confidence)
   "A JUMP-MARK with KIND from +JUMPS+."
-  (declare (ignorable id kind provenance confidence))
-  (%sc0-pending 'make-jump-mark))
+  (check-type kind (satisfies %jump-kind-p) "a keyword of +JUMPS+")
+  (%make-element 'jump-mark id provenance confidence :kind kind))
 
 (defun make-rehearsal-mark (&key id text provenance confidence)
   "A REHEARSAL-MARK with TEXT."
-  (declare (ignorable id text provenance confidence))
-  (%sc0-pending 'make-rehearsal-mark))
+  (check-type text string)
+  (%make-element 'rehearsal-mark id provenance confidence :text text))
 
 (defun make-tempo-mark (&key id (offset 0) tempo text provenance confidence)
   "A TEMPO-MARK at OFFSET in its measure: a music-theory TEMPO, TEXT, or both."
-  (declare (ignorable id offset tempo text provenance confidence))
-  (%sc0-pending 'make-tempo-mark))
+  (check-type offset (rational 0))
+  (check-type tempo (or null music-theory:tempo))
+  (check-type text (or null string))
+  (%make-element 'tempo-mark id provenance confidence :offset offset :tempo tempo :text text))
 
 (defun make-measure-info (&key id number time key pickup-p length (barline :regular)
                                repeat-start repeat-end ending jump rehearsal tempo
                                provenance confidence)
   "A MEASURE-INFO (file header)."
-  (declare (ignorable id number time key pickup-p length barline repeat-start
-                      repeat-end ending jump rehearsal tempo provenance confidence))
-  (%sc0-pending 'make-measure-info))
+  (check-type number (or null string))
+  (check-type time (or null music-theory:meter))
+  (check-type key (or null music-theory:key))
+  (check-type length (or null (rational (0))))
+  (check-type barline (satisfies %barline-p) "a keyword of +BARLINES+")
+  (check-type repeat-end (or null (integer 2)))
+  (check-type ending (or null ending))
+  (check-type jump (satisfies %jump-marks-p) "a list of JUMP-MARKs")
+  (check-type rehearsal (or null rehearsal-mark))
+  (check-type tempo (satisfies %tempo-marks-p) "a list of TEMPO-MARKs")
+  (%make-element 'measure-info id provenance confidence
+                 :number number :time time :key key :pickup-p (and pickup-p t)
+                 :length length :barline barline :repeat-start (and repeat-start t)
+                 :repeat-end repeat-end :ending ending
+                 :jump (%sort-by-set jump #'jump-mark-kind +jumps+)
+                 :rehearsal rehearsal
+                 :tempo (stable-sort (copy-list tempo) #'< :key #'tempo-mark-offset)))
+
+;;; The bar table -------------------------------------------------------------
+;;; MAKE-SCORE computes it once from the measure map and keeps it in the score's
+;;; index (score.lisp); %SCORE-BARS reads it back.
+
+(defstruct (%bar-table (:constructor %make-bar-table) (:copier nil) (:predicate nil))
+  "Per measure index: the MEASURE-INFO, its start, its length, and the meter and
+key in force. FIRST is the first bar number, DURATION the sum of the lengths."
+  (first 1 :type (integer 0 1) :read-only t)
+  (measures #() :type simple-vector :read-only t)
+  (starts #() :type simple-vector :read-only t)
+  (lengths #() :type simple-vector :read-only t)
+  (times #() :type simple-vector :read-only t)
+  (keys #() :type simple-vector :read-only t)
+  (duration 0 :type rational :read-only t))
+
+(defun %compute-bar-table (measures)
+  "The bar table of MEASURES, a list of MEASURE-INFOs (file header)."
+  (let ((n (length measures))
+        (time (music-theory:make-meter))
+        (key (music-theory:make-key))
+        (start 0))
+    (let ((starts (make-array n)) (lengths (make-array n))
+          (times (make-array n)) (keys (make-array n)))
+      (loop for measure in measures
+            for i from 0
+            do (setf time (or (measure-info-time measure) time)
+                     key (or (measure-info-key measure) key))
+               (let ((length (or (measure-info-length measure)
+                                 (music-theory:meter-measure-duration time))))
+                 (setf (svref starts i) start
+                       (svref lengths i) length
+                       (svref times i) time
+                       (svref keys i) key)
+                 (incf start length)))
+      (%make-bar-table :first (if (and measures (measure-info-pickup-p (first measures))) 0 1)
+                       :measures (coerce measures 'simple-vector)
+                       :starts starts :lengths lengths :times times :keys keys
+                       :duration start))))
+
+(defgeneric %score-bars (score)
+  (:documentation "The bar table of SCORE. The method for SCORE is in score.lisp.")
+  (:method (score)
+    (error 'type-error :datum score :expected-type 'score)))
+
+(defun %bar-count (table)
+  (length (%bar-table-measures table)))
+
+(defun %bar-index (table bar)
+  "The measure index of the integer BAR in TABLE, or NIL when it isn't a bar."
+  (let ((i (- bar (%bar-table-first table))))
+    (and (<= 0 i) (< i (%bar-count table)) i)))
+
+(defun %invalid-position (argument reason)
+  "Signal INVALID-POSITION for ARGUMENT inside a USE-VALUE restart; return the
+restart's value."
+  (restart-case (error 'invalid-position :position argument :reason reason)
+    (use-value (value)
+      :report "Return a value instead."
+      :interactive (lambda ()
+                     (format *query-io* "~&Value to return: ")
+                     (finish-output *query-io*)
+                     (list (read *query-io*)))
+      value)))
+
+(defun %bar-slot (score bar vector-reader)
+  "The VECTOR-READER entry of BAR in SCORE's bar table, or INVALID-POSITION."
+  (check-type bar integer)
+  (let* ((table (%score-bars score))
+         (i (%bar-index table bar)))
+    (if i
+        (svref (funcall vector-reader table) i)
+        (%invalid-position bar "no such bar"))))
 
 ;;; Bars ---------------------------------------------------------------------
 
 (defun score-first-bar (score)
   "0 when the first measure is a pickup, else 1."
-  (declare (ignorable score))
-  (%sc0-pending 'score-first-bar))
+  (%bar-table-first (%score-bars score)))
 
 (defun score-last-bar (score)
   "The first bar + the number of measures - 1."
-  (declare (ignorable score))
-  (%sc0-pending 'score-last-bar))
+  (let ((table (%score-bars score)))
+    (+ (%bar-table-first table) (%bar-count table) -1)))
 
 (defun score-duration (score)
   "The sum of all bar lengths, in whole notes."
-  (declare (ignorable score))
-  (%sc0-pending 'score-duration))
+  (%bar-table-duration (%score-bars score)))
 
 (defun bar-measure (score bar)
   "The MEASURE-INFO of BAR."
-  (declare (ignorable score bar))
-  (%sc0-pending 'bar-measure))
+  (%bar-slot score bar #'%bar-table-measures))
 
 (defun bar-time (score bar)
   "The METER in force in BAR (file header: inherited, else 4/4)."
-  (declare (ignorable score bar))
-  (%sc0-pending 'bar-time))
+  (%bar-slot score bar #'%bar-table-times))
 
 (defun bar-key (score bar)
   "The KEY in force in BAR (file header: inherited, else C major)."
-  (declare (ignorable score bar))
-  (%sc0-pending 'bar-key))
+  (%bar-slot score bar #'%bar-table-keys))
 
 (defun bar-length (score bar)
   "The length of BAR: its measure's LENGTH, else its meter's bar."
-  (declare (ignorable score bar))
-  (%sc0-pending 'bar-length))
+  (%bar-slot score bar #'%bar-table-lengths))
 
 (defun bar-start (score bar)
   "The absolute offset of the start of BAR; the first bar starts at 0."
-  (declare (ignorable score bar))
-  (%sc0-pending 'bar-start))
+  (%bar-slot score bar #'%bar-table-starts))
 
 ;;; Positions ----------------------------------------------------------------
 
 (defun absolute-offset (score position)
   "BAR-START of POSITION's bar + its offset (file header)."
-  (declare (ignorable score position))
-  (%sc0-pending 'absolute-offset))
+  (check-type position cons "a (bar . offset) position")
+  (let ((bar (car position))
+        (offset (cdr position)))
+    ;; Every type before any range: the type rows sit next to the range rows.
+    (check-type bar integer)
+    (check-type offset rational)
+    (let* ((table (%score-bars score))
+           (i (%bar-index table bar)))
+      (if (and i (<= 0 offset (svref (%bar-table-lengths table) i)))
+          (+ (svref (%bar-table-starts table) i) offset)
+          (%invalid-position position "outside the score")))))
 
 (defun offset-position (score offset)
   "The (bar . offset) position of the absolute OFFSET (file header)."
-  (declare (ignorable score offset))
-  (%sc0-pending 'offset-position))
+  (check-type offset rational)
+  (let* ((table (%score-bars score))
+         (n (%bar-count table))
+         (starts (%bar-table-starts table)))
+    (cond ((or (zerop n) (< offset 0) (> offset (%bar-table-duration table)))
+           (%invalid-position offset "outside the score"))
+          ((= offset (%bar-table-duration table))
+           (cons (+ (%bar-table-first table) n -1)
+                 (svref (%bar-table-lengths table) (1- n))))
+          (t
+           (let ((i (position-if (lambda (start) (<= start offset)) starts :from-end t)))
+             (cons (+ (%bar-table-first table) i) (- offset (svref starts i))))))))

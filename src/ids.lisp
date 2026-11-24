@@ -116,12 +116,57 @@
 takes the first row whose class it is an instance of. These are also the only
 prefixes that give a string a serial. Data.")
 
+(defparameter +serial-digits+ "0123456789abcdefghijklmnopqrstuvwxyz"
+  "The base-36 digits of a serial, in value order: lower case only. Data.")
+
+;;; ASCII by char code: ALPHA-CHAR-P and DIGIT-CHAR-P accept non-ASCII letters
+;;; and digits on some implementations.
+
+(defun %ascii-letter-p (char)
+  (let ((code (char-code char)))
+    (or (<= 65 code 90) (<= 97 code 122))))
+
+(defun %ascii-digit-p (char)
+  (<= 48 (char-code char) 57))
+
+(defun %id-char-p (char)
+  (or (%ascii-letter-p char) (%ascii-digit-p char) (char= char #\-) (char= char #\_)))
+
 (defun valid-id-p (object)
   "True when OBJECT is a string in the id syntax of the file header."
-  (declare (ignorable object))
-  (%sc0-pending 'valid-id-p))
+  (and (stringp object)
+       (plusp (length object))
+       (%ascii-letter-p (char object 0))
+       (every #'%id-char-p object)
+       t))
+
+(deftype %id ()
+  "An id string (VALID-ID-P)."
+  '(satisfies valid-id-p))
+
+(defun %id-serial (id)
+  "The serial ID has (file header): an integer >= 1, or NIL when ID is not a
+known prefix, \"-\" and a canonical base-36 numeral."
+  (let ((dash (and (stringp id) (position #\- id))))
+    (when (and dash (rassoc (subseq id 0 dash) +id-prefixes+ :test #'string=))
+      (let ((start (1+ dash)))
+        ;; Check the digits first: PARSE-INTEGER would accept upper case and a sign.
+        (when (and (< start (length id))
+                   (char/= #\0 (char id start))
+                   (loop for i from start below (length id)
+                         always (find (char id i) +serial-digits+)))
+          (parse-integer id :start start :radix 36))))))
+
+(defun %id-prefix (element)
+  "The prefix of ELEMENT's minted ids: the first +ID-PREFIXES+ row it is of."
+  (cdr (find-if (lambda (row) (typep element (car row))) +id-prefixes+)))
+
+(defun %minted-id (prefix serial)
+  "PREFIX, \"-\" and SERIAL in lower-case base 36: (%minted-id \"e\" 40) => \"e-14\"."
+  (format nil "~A-~(~36R~)" prefix serial))
 
 (defun slice-id (measure-id element-id)
   "The id of ELEMENT-ID's share of the measure MEASURE-ID: \"m-3.p-4\"."
-  (declare (ignorable measure-id element-id))
-  (%sc0-pending 'slice-id))
+  (check-type measure-id %id "an id string")
+  (check-type element-id %id "an id string")
+  (concatenate 'string measure-id "." element-id))

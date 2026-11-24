@@ -100,12 +100,209 @@
   (bar nil :type (or null integer) :read-only t)
   (detail nil :type list :read-only t))
 
+;;; One pass over the index entries in document order. Each subject class has a
+;;; %CHECK-ELEMENT method (PROGN combination, so an event's EVENT,
+;;; SOUNDING-EVENT and CHORD-EVENT methods all run). Onsets come from the bar
+;;; table, not from ABSOLUTE-OFFSET, so CHECK-SCORE never signals.
+
+(defstruct (%checker (:constructor %make-checker (index bars)) (:copier nil) (:predicate nil))
+  "The state of one CHECK-SCORE pass: the score's INDEX and BARS, the ISSUES so
+far, and what earlier subjects in document order left behind."
+  (index nil :read-only t)
+  (bars nil :read-only t)
+  (issues '())
+  (tie-ends (make-hash-table :test 'equal) :read-only t)
+  (anchor-positions '())
+  (ending-reach 0))
+
+(defun %issue (checker kind element bar &optional detail)
+  (push (make-score-issue :kind kind :id (element-id element) :bar bar :detail detail)
+        (%checker-issues checker)))
+
+(defun %measure-count (checker)
+  (%bar-count (%checker-bars checker)))
+
+(defun %entry-bar (checker entry)
+  "The bar of ENTRY's measure or voice measure."
+  (+ (%bar-table-first (%checker-bars checker)) (%entry-measure entry)))
+
+(defun %in-map-p (checker entry)
+  "True when ENTRY's voice measure is inside the measure map."
+  (< (%entry-measure entry) (%measure-count checker)))
+
+(defun %onset (checker entry)
+  "The absolute offset of ENTRY's position, which is inside the map."
+  (+ (svref (%bar-table-starts (%checker-bars checker)) (%entry-measure entry))
+     (%entry-offset entry)))
+
+(defun %lookup (checker id)
+  "The entry of the first carrier of ID, or NIL."
+  (values (fset:lookup (%score-index-by-id (%checker-index checker)) id)))
+
+(defun %duplicate-p (list key)
+  "True when two members of LIST have EQL KEYs."
+  (loop for (x . rest) on list
+        thereis (member (funcall key x) rest :key key)))
+
+(defgeneric %check-element (element entry checker)
+  (:documentation "Record the issues ELEMENT is the subject of.")
+  (:method-combination progn)
+  (:method progn ((element element) entry checker)
+    (declare (ignore entry checker))
+    nil))
+
+(defmethod %check-element progn ((measure measure-info) entry checker)
+  (let* ((i (%entry-measure entry))
+         (bar (%entry-bar checker entry)))
+    (when (and (zerop i) (not (and (measure-info-time measure) (measure-info-key measure))))
+      (%issue checker :missing-signature measure bar))
+    (when (and (measure-info-pickup-p measure)
+               (or (plusp i)
+                   (null (measure-info-length measure))
+                   (>= (measure-info-length measure)
+                       (music-theory:meter-measure-duration
+                        (svref (%bar-table-times (%checker-bars checker)) i)))))
+      (%issue checker :bad-pickup measure bar))
+    (when (%duplicate-p (measure-info-jump measure) #'jump-mark-kind)
+      (%issue checker :duplicate-mark measure bar))))
+
+(defmethod %check-element progn ((ending ending) entry checker)
+  (let* ((i (%entry-measure entry))
+         (end (+ i (ending-measures ending))))
+    (when (or (> end (%measure-count checker))
+              (< i (%checker-ending-reach checker)))
+      (%issue checker :bad-ending ending (%entry-bar checker entry)))
+    (setf (%checker-ending-reach checker) (max end (%checker-ending-reach checker)))))
+
+(defmethod %check-element progn ((mark tempo-mark) entry checker)
+  (when (>= (tempo-mark-offset mark)
+            (svref (%bar-table-lengths (%checker-bars checker)) (%entry-measure entry)))
+    (%issue checker :tempo-mark-position mark (%entry-bar checker entry))))
+
+(defmethod %check-element progn ((voice voice) entry checker)
+  (let* ((measures (voice-measures voice))
+         (count (fset:size measures))
+         (n (%measure-count checker))
+         (bars (%checker-bars checker)))
+    (when (> (voice-staff voice) (length (part-staves (%entry-part entry))))
+      (%issue checker :voice-staff voice nil))
+    (unless (= count n)
+      (%issue checker :measure-count voice nil (list :expected n :actual count)))
+    (dotimes (j (min count n))
+      (let ((events (fset:convert 'list (fset:@ measures j))))
+        (when events
+          (let ((sum (loop for event in events
+                           unless (%grace-p event) sum (event-duration event)))
+                (length (svref (%bar-table-lengths bars) j)))
+            (unless (= sum length)
+              (%issue checker :measure-duration voice (+ (%bar-table-first bars) j)
+                      (list :expected length :actual sum)))))))))
+
+(defmethod %check-element progn ((event event) entry checker)
+  (let ((bar (%entry-bar checker entry)))
+    (unless (or (and (typep event 'rest-event) (rest-event-measure-rest-p event))
+                (music-theory:duration-dots (event-duration event) :tuplet (event-tuplet event)))
+      (%issue checker :unnotatable-duration event bar))
+    (when (%duplicate-p (event-lyrics event) #'lyric-verse)
+      (%issue checker :duplicate-verse event bar))))
+
+(defmethod %check-element progn ((event sounding-event) entry checker)
+  (when (%duplicate-p (event-articulations event) #'articulation-kind)
+    (%issue checker :duplicate-mark event (%entry-bar checker entry))))
+
+(defmethod %check-element progn ((chord chord-event) entry checker)
+  (when (< (length (chord-event-notes chord)) 2)
+    (%issue checker :degenerate-chord chord (%entry-bar checker entry))))
+
+(defmethod %check-element progn ((lyric lyric) entry checker)
+  (let ((event (%entry-event entry)))
+    (when (or (typep event 'rest-event) (%grace-p event))
+      (%issue checker :misplaced-lyric lyric (%entry-bar checker entry)))))
+
+(defmethod %check-element progn ((tie tie) entry checker)
+  (let* ((end (tie-end tie))
+         (source (%entry-event entry))
+         (target (%lookup checker end))
+         (note (and target (%entry-element target)))
+         (note-p (typep note '(or note-event chord-note)))
+         (bar (%entry-bar checker entry)))
+    ;; OR stops at the first reason, so onsets are only taken inside the map.
+    (when (or (not note-p)
+              (not (eq (%entry-voice target) (%entry-voice entry)))
+              (%grace-p source)
+              (%grace-p (%entry-event target))
+              (not (%in-map-p checker entry))
+              (not (%in-map-p checker target))
+              (/= (%onset checker target) (+ (%onset checker entry) (event-duration source)))
+              (gethash end (%checker-tie-ends checker)))
+      (%issue checker :tie-target tie bar))
+    (setf (gethash end (%checker-tie-ends checker)) t)
+    (when (and note-p (not (equalp (note-pitch note) (note-pitch (%entry-parent entry)))))
+      (%issue checker :tie-pitch tie bar))))
+
+(defun %spanner-endpoints-p (checker spanner start end)
+  "True when the entries START and END pass :SPANNER-ENDPOINT for SPANNER."
+  (let ((a (and start (%entry-element start)))
+        (b (and end (%entry-element end))))
+    (and (typep a 'event)
+         (typep b 'event)
+         (eq (%entry-part start) (%entry-part end))
+         (%in-map-p checker start)
+         (%in-map-p checker end)
+         (not (and (eq (spanner-kind spanner) :slur)
+                   (or (typep a 'rest-event) (typep b 'rest-event)))))))
+
+(defun %spanner-ordered-p (checker spanner start end)
+  "True when START precedes END, or SPANNER is a hairpin on one event."
+  (let ((onset-a (%onset checker start))
+        (onset-b (%onset checker end)))
+    (or (< onset-a onset-b)
+        (and (= onset-a onset-b)
+             (eq (%entry-voice start) (%entry-voice end))
+             (< (%entry-order start) (%entry-order end)))
+        (and (eq start end)
+             (member (spanner-kind spanner) '(:crescendo :diminuendo))
+             t))))
+
+(defmethod %check-element progn ((spanner spanner) entry checker)
+  (declare (ignore entry))
+  (let ((start (%lookup checker (spanner-start spanner)))
+        (end (%lookup checker (spanner-end spanner))))
+    (cond ((not (%spanner-endpoints-p checker spanner start end))
+           (%issue checker :spanner-endpoint spanner nil))
+          ((not (%spanner-ordered-p checker spanner start end))
+           (%issue checker :spanner-order spanner nil)))))
+
+(defmethod %check-element progn ((anchor chord-symbol-anchor) entry checker)
+  (declare (ignore entry))
+  (let* ((position (anchor-position anchor))
+         (bars (%checker-bars checker))
+         (i (%bar-index bars (car position))))
+    (when (or (null i)
+              (>= (cdr position) (svref (%bar-table-lengths bars) i))
+              (member position (%checker-anchor-positions checker) :test #'equal))
+      (%issue checker :chord-symbol-position anchor nil))
+    (push position (%checker-anchor-positions checker))))
+
 (defun check-score (score)
   "The SCORE-ISSUEs of SCORE (file header), () when it is valid."
-  (declare (ignorable score))
-  (%sc0-pending 'check-score))
+  (check-type score score)
+  (let* ((index (%score-index score))
+         (checker (%make-checker index (%score-index-bars index)))
+         (id-counts (make-hash-table :test 'equal)))
+    (loop for entry across (%score-index-entries index)
+          for element = (%entry-element entry)
+          do (when (= 2 (incf (gethash (element-id element) id-counts 0)))
+               (%issue checker :duplicate-id element nil))
+             (%check-element element entry checker))
+    (%checker-issues checker)))
 
 (defun validate-score (score)
   "SCORE when it is valid, else SCORE-INVARIANT-VIOLATION inside CONTINUE."
-  (declare (ignorable score))
-  (%sc0-pending 'validate-score))
+  (let ((issues (check-score score)))
+    (if (null issues)
+        score
+        (restart-case (error 'score-invariant-violation :issues issues)
+          (continue ()
+            :report "Return the score as it is."
+            score)))))

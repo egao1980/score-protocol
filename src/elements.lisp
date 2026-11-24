@@ -223,87 +223,214 @@ accidental display, and its TIE to the next note."))
   (print-unreadable-object (element stream :type t :identity (null (element-id element)))
     (format stream "~S" (element-id element))))
 
+;;; Argument types ------------------------------------------------------------
+;;; Run-time predicates, so the closed sets stay the defparameters above and
+;;; the compiler never needs their values. CHECK-TYPE names them in
+;;; (satisfies ...) types with a readable description.
+
+(defun %clef-p (object) (and (member object +clefs+) t))
+(defun %fermata-shape-p (object) (and (member object +fermatas+) t))
+(defun %dynamic-value-p (object) (and (member object +dynamics+) t))
+(defun %grace-kind-p (object) (and (member object +grace-kinds+) t))
+(defun %articulation-kind-p (object) (and (member object +articulations+) t))
+(defun %accidental-display-p (object) (and (member object +accidental-displays+) t))
+(defun %syllabic-p (object) (and (member object +syllabics+) t))
+(defun %stem-p (object) (and (member object +stems+) t))
+(defun %spanner-kind-p (object) (and (member object +spanner-kinds+) t))
+
+(defun %list-of-p (object type &optional non-empty)
+  "True when OBJECT is a proper list whose members are of TYPE, and not empty
+when NON-EMPTY."
+  (and (listp object)
+       (or (not non-empty) (consp object))
+       (loop for tail = object then (cdr tail)
+             while (consp tail)
+             always (typep (car tail) type)
+             finally (return (null tail)))))
+
+(defun %list-or-seq-of-p (object type)
+  "True when OBJECT is a proper list or an FSet seq whose members are of TYPE."
+  (typecase object
+    (list (%list-of-p object type))
+    (fset:seq (%list-of-p (fset:convert 'list object) type))
+    (t nil)))
+
+(defun %staves-p (object) (%list-of-p object 'staff t))
+(defun %voices-p (object) (%list-of-p object 'voice t))
+(defun %lyrics-p (object) (%list-of-p object 'lyric))
+(defun %articulations-p (object) (%list-of-p object 'articulation))
+(defun %chord-notes-p (object) (%list-of-p object 'chord-note))
+(defun %events-p (object) (%list-or-seq-of-p object 'event))
+
+(defun %voice-measures-p (object)
+  "True when OBJECT is a list or FSet seq of voice measures, each a list or
+FSet seq of EVENTs."
+  (typecase object
+    (list (and (%list-of-p object t) (every #'%events-p object)))
+    (fset:seq (every #'%events-p (fset:convert 'list object)))
+    (t nil)))
+
+;;; Normalisation -------------------------------------------------------------
+
+(defun %sort-by-set (list key set)
+  "A fresh copy of LIST, stable-sorted by the position of (KEY member) in SET."
+  (stable-sort (copy-list list) #'< :key (lambda (x) (position (funcall key x) set))))
+
+(defun %sort-lyrics (lyrics)
+  "A fresh copy of LYRICS, stable-sorted by verse."
+  (stable-sort (copy-list lyrics) #'< :key #'lyric-verse))
+
+(defun %seq-of-seqs (measures)
+  "MEASURES (a list or seq of lists or seqs) as a fresh FSet seq of FSet seqs."
+  (fset:convert 'fset:seq (mapcar (lambda (events) (fset:convert 'fset:seq events))
+                                  (fset:convert 'list measures))))
+
+(defun %make-element (class id provenance confidence &rest initargs)
+  "An instance of CLASS after checking the slots every element has. The
+constructors call it last, with their other slots checked and normalised."
+  (check-type id (or null %id) "NIL or an id string")
+  (check-type provenance (or null provenance))
+  (check-type confidence (or null (real 0 1)))
+  (apply #'make-instance class :id id :provenance provenance :confidence confidence
+         initargs))
+
 ;;; Constructors -------------------------------------------------------------
 
 (defun make-part (&key id name abbreviation staves voices provenance confidence)
   "A PART (file header). STAVES and VOICES are non-empty lists."
-  (declare (ignorable id name abbreviation staves voices provenance confidence))
-  (%sc0-pending 'make-part))
+  (check-type name (or null string))
+  (check-type abbreviation (or null string))
+  (check-type staves (satisfies %staves-p) "a non-empty list of STAFFs")
+  (check-type voices (satisfies %voices-p) "a non-empty list of VOICEs")
+  (%make-element 'part id provenance confidence
+                 :name name :abbreviation abbreviation
+                 :staves (copy-list staves) :voices (copy-list voices)))
 
 (defun make-staff (&key id (clef :treble) provenance confidence)
   "A STAFF with CLEF from +CLEFS+."
-  (declare (ignorable id clef provenance confidence))
-  (%sc0-pending 'make-staff))
+  (check-type clef (satisfies %clef-p) "a keyword of +CLEFS+")
+  (%make-element 'staff id provenance confidence :clef clef))
 
 (defun make-voice (&key id name (staff 1) stem measures provenance confidence)
   "A VOICE. MEASURES is a list or seq of voice measures, each a list or seq of
 events; it is stored as an FSet seq of FSet seqs."
-  (declare (ignorable id name staff stem measures provenance confidence))
-  (%sc0-pending 'make-voice))
+  (check-type name (or null string))
+  (check-type staff (integer 1))
+  (check-type stem (or null (satisfies %stem-p)) "NIL, :UP or :DOWN")
+  (check-type measures (satisfies %voice-measures-p)
+              "a list or FSet seq of voice measures, each a list or FSet seq of EVENTs")
+  (%make-element 'voice id provenance confidence
+                 :name name :staff staff :stem stem :measures (%seq-of-seqs measures)))
 
 (defun make-rest-event (&key id duration tuplet measure-rest-p hidden-p fermata
                              dynamic lyrics provenance confidence)
   "A REST-EVENT."
-  (declare (ignorable id duration tuplet measure-rest-p hidden-p fermata dynamic
-                      lyrics provenance confidence))
-  (%sc0-pending 'make-rest-event))
+  (check-type duration (rational (0)))
+  (check-type tuplet (or null (rational (0))))
+  (check-type fermata (or null fermata))
+  (check-type dynamic (or null dynamic-mark))
+  (check-type lyrics (satisfies %lyrics-p) "a list of LYRICs")
+  (%make-element 'rest-event id provenance confidence
+                 :duration duration :tuplet tuplet
+                 :measure-rest-p (and measure-rest-p t) :hidden-p (and hidden-p t)
+                 :fermata fermata :dynamic dynamic :lyrics (%sort-lyrics lyrics)))
 
 (defun make-note-event (&key id pitch duration tuplet grace (accidental :auto) tie
                              articulations fermata breath-mark dynamic lyrics
                              provenance confidence)
   "A NOTE-EVENT. PITCH is a music-theory SPELLED-PITCH."
-  (declare (ignorable id pitch duration tuplet grace accidental tie articulations
-                      fermata breath-mark dynamic lyrics provenance confidence))
-  (%sc0-pending 'make-note-event))
+  (check-type pitch music-theory:spelled-pitch)
+  (check-type duration (rational (0)))
+  (check-type tuplet (or null (rational (0))))
+  (check-type grace (or null (satisfies %grace-kind-p)) "NIL or a keyword of +GRACE-KINDS+")
+  (check-type accidental (satisfies %accidental-display-p)
+              "a keyword of +ACCIDENTAL-DISPLAYS+")
+  (check-type tie (or null tie))
+  (check-type articulations (satisfies %articulations-p) "a list of ARTICULATIONs")
+  (check-type fermata (or null fermata))
+  (check-type breath-mark (or null breath-mark))
+  (check-type dynamic (or null dynamic-mark))
+  (check-type lyrics (satisfies %lyrics-p) "a list of LYRICs")
+  (%make-element 'note-event id provenance confidence
+                 :pitch pitch :duration duration :tuplet tuplet :grace grace
+                 :accidental accidental :tie tie
+                 :articulations (%sort-by-set articulations #'articulation-kind +articulations+)
+                 :fermata fermata :breath-mark breath-mark :dynamic dynamic
+                 :lyrics (%sort-lyrics lyrics)))
 
 (defun make-chord-event (&key id notes duration tuplet grace articulations fermata
                               breath-mark dynamic lyrics provenance confidence)
   "A CHORD-EVENT. NOTES is a list of CHORD-NOTEs."
-  (declare (ignorable id notes duration tuplet grace articulations fermata
-                      breath-mark dynamic lyrics provenance confidence))
-  (%sc0-pending 'make-chord-event))
+  (check-type notes (satisfies %chord-notes-p) "a list of CHORD-NOTEs")
+  (check-type duration (rational (0)))
+  (check-type tuplet (or null (rational (0))))
+  (check-type grace (or null (satisfies %grace-kind-p)) "NIL or a keyword of +GRACE-KINDS+")
+  (check-type articulations (satisfies %articulations-p) "a list of ARTICULATIONs")
+  (check-type fermata (or null fermata))
+  (check-type breath-mark (or null breath-mark))
+  (check-type dynamic (or null dynamic-mark))
+  (check-type lyrics (satisfies %lyrics-p) "a list of LYRICs")
+  (%make-element 'chord-event id provenance confidence
+                 :notes (copy-list notes) :duration duration :tuplet tuplet :grace grace
+                 :articulations (%sort-by-set articulations #'articulation-kind +articulations+)
+                 :fermata fermata :breath-mark breath-mark :dynamic dynamic
+                 :lyrics (%sort-lyrics lyrics)))
 
 (defun make-chord-note (&key id pitch (accidental :auto) tie provenance confidence)
   "A CHORD-NOTE, one pitch of a CHORD-EVENT."
-  (declare (ignorable id pitch accidental tie provenance confidence))
-  (%sc0-pending 'make-chord-note))
+  (check-type pitch music-theory:spelled-pitch)
+  (check-type accidental (satisfies %accidental-display-p)
+              "a keyword of +ACCIDENTAL-DISPLAYS+")
+  (check-type tie (or null tie))
+  (%make-element 'chord-note id provenance confidence
+                 :pitch pitch :accidental accidental :tie tie))
 
 (defun make-dynamic-mark (&key id value provenance confidence)
   "A DYNAMIC-MARK with VALUE from +DYNAMICS+."
-  (declare (ignorable id value provenance confidence))
-  (%sc0-pending 'make-dynamic-mark))
+  (check-type value (satisfies %dynamic-value-p) "a keyword of +DYNAMICS+")
+  (%make-element 'dynamic-mark id provenance confidence :value value))
 
 (defun make-fermata (&key id (shape :normal) provenance confidence)
   "A FERMATA with SHAPE from +FERMATAS+."
-  (declare (ignorable id shape provenance confidence))
-  (%sc0-pending 'make-fermata))
+  (check-type shape (satisfies %fermata-shape-p) "a keyword of +FERMATAS+")
+  (%make-element 'fermata id provenance confidence :shape shape))
 
 (defun make-breath-mark (&key id provenance confidence)
   "A BREATH-MARK."
-  (declare (ignorable id provenance confidence))
-  (%sc0-pending 'make-breath-mark))
+  (%make-element 'breath-mark id provenance confidence))
 
 (defun make-articulation (&key id kind provenance confidence)
   "An ARTICULATION with KIND from +ARTICULATIONS+."
-  (declare (ignorable id kind provenance confidence))
-  (%sc0-pending 'make-articulation))
+  (check-type kind (satisfies %articulation-kind-p) "a keyword of +ARTICULATIONS+")
+  (%make-element 'articulation id provenance confidence :kind kind))
 
 (defun make-tie (&key id end provenance confidence)
   "A TIE to the note whose id is END."
-  (declare (ignorable id end provenance confidence))
-  (%sc0-pending 'make-tie))
+  (check-type end %id "an id string")
+  (%make-element 'tie id provenance confidence :end end))
 
 (defun make-lyric (&key id (verse 1) text (syllabic :single) extender provenance confidence)
   "A LYRIC syllable of verse VERSE."
-  (declare (ignorable id verse text syllabic extender provenance confidence))
-  (%sc0-pending 'make-lyric))
+  (check-type verse (integer 1))
+  (check-type text string)
+  (check-type syllabic (satisfies %syllabic-p) "a keyword of +SYLLABICS+")
+  (%make-element 'lyric id provenance confidence
+                 :verse verse :text text :syllabic syllabic :extender (and extender t)))
 
 (defun make-chord-symbol-anchor (&key id position symbol provenance confidence)
   "A CHORD-SYMBOL-ANCHOR: SYMBOL (a music-theory CHORD-SYMBOL) at POSITION."
-  (declare (ignorable id position symbol provenance confidence))
-  (%sc0-pending 'make-chord-symbol-anchor))
+  (check-type position (cons (integer 0) (rational 0)) "a (bar . offset) position")
+  (check-type symbol music-theory:chord-symbol)
+  (%make-element 'chord-symbol-anchor id provenance confidence
+                 :position (cons (car position) (cdr position)) :symbol symbol))
 
 (defun make-spanner (&key id kind start end provenance confidence)
   "A SPANNER of KIND from the event with id START to the event with id END."
-  (declare (ignorable id kind start end provenance confidence))
-  (%sc0-pending 'make-spanner))
+  (check-type kind (satisfies %spanner-kind-p) "a keyword of +SPANNER-KINDS+")
+  (check-type start %id "an id string")
+  (check-type end %id "an id string")
+  (%make-element 'spanner id provenance confidence :kind kind :start start :end end))
+
+(defun %grace-p (event)
+  "True when EVENT is a grace event (it takes no time)."
+  (and (typep event 'sounding-event) (event-grace event) t))

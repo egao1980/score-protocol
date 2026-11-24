@@ -70,51 +70,484 @@
   (print-unreadable-object (score stream :type t :identity t)
     (format stream "~@[~S~]" (getf (score-metadata score) :title))))
 
+;;; The element grammar ------------------------------------------------------
+;;; One row per element kind: the kind keyword of its canonical form
+;;; (sexp.lisp), its class, its constructor, and its fields in canonical key
+;;; order. A field is (KEY READER &key CODEC INITARG DEFAULT ALWAYS):
+;;;   KEY      the form key; a list of keys for a composite codec
+;;;   READER   the slot reader
+;;;   CODEC    :VALUE (written as stored), :PITCH, :METER, :KEY (music-theory
+;;;            text), :TEMPO (:bpm and :beat-unit), :POSITION (:bar and
+;;;            :offset), :CHORD-SYMBOL, :PROVENANCE (plists), or a child codec:
+;;;            (:FORM kind...), (:FORMS kind...) or (:VOICE-MEASURES kind...)
+;;;   INITARG  the slot's initarg and constructor keyword, default KEY
+;;;   DEFAULT  the value left out of a canonical form, default NIL
+;;;   ALWAYS   true when the key is written whatever its value
+;;; :ID comes first and :PROVENANCE, :CONFIDENCE last in every row
+;;; (%PARSE-FORM-ROW adds them). The child fields, in row order, give an
+;;; element's children in document order (ids.lisp), so the walk, the writer
+;;; and the reader agree by construction. Grammar data, not rules.
+
+(defparameter +element-forms+
+  '((:measure measure-info make-measure-info
+     (:number measure-info-number)
+     (:time measure-info-time :codec :meter)
+     (:key measure-info-key :codec :key)
+     (:pickup measure-info-pickup-p :initarg :pickup-p)
+     (:length measure-info-length)
+     (:barline measure-info-barline :default :regular)
+     (:repeat-start measure-info-repeat-start)
+     (:repeat-end measure-info-repeat-end)
+     (:ending measure-info-ending :codec (:form :ending))
+     (:jump measure-info-jump :codec (:forms :jump))
+     (:rehearsal measure-info-rehearsal :codec (:form :rehearsal))
+     (:tempo measure-info-tempo :codec (:forms :tempo-mark)))
+    (:ending ending make-ending
+     (:passes ending-passes :always t)
+     (:measures ending-measures :default 1))
+    (:jump jump-mark make-jump-mark
+     (:kind jump-mark-kind :always t))
+    (:rehearsal rehearsal-mark make-rehearsal-mark
+     (:text rehearsal-mark-text :always t))
+    (:tempo-mark tempo-mark make-tempo-mark
+     (:offset tempo-mark-offset :default 0)
+     ((:bpm :beat-unit) tempo-mark-tempo :codec :tempo :initarg :tempo)
+     (:text tempo-mark-text))
+    (:part part make-part
+     (:name part-name)
+     (:abbreviation part-abbreviation)
+     (:staves part-staves :codec (:forms :staff) :always t)
+     (:voices part-voices :codec (:forms :voice) :always t))
+    (:staff staff make-staff
+     (:clef staff-clef :default :treble))
+    (:voice voice make-voice
+     (:name voice-name)
+     (:staff voice-staff :default 1)
+     (:stem voice-stem)
+     (:measures voice-measures :codec (:voice-measures :rest :note :chord) :always t))
+    (:rest rest-event make-rest-event
+     (:duration event-duration :always t)
+     (:tuplet event-tuplet)
+     (:measure-rest rest-event-measure-rest-p :initarg :measure-rest-p)
+     (:hidden rest-event-hidden-p :initarg :hidden-p)
+     (:fermata event-fermata :codec (:form :fermata))
+     (:dynamic event-dynamic :codec (:form :dynamic))
+     (:lyrics event-lyrics :codec (:forms :lyric)))
+    (:note note-event make-note-event
+     (:pitch note-pitch :codec :pitch :always t)
+     (:duration event-duration :always t)
+     (:tuplet event-tuplet)
+     (:grace event-grace)
+     (:accidental note-accidental :default :auto)
+     (:tie note-tie :codec (:form :tie))
+     (:articulations event-articulations :codec (:forms :articulation))
+     (:fermata event-fermata :codec (:form :fermata))
+     (:breath-mark event-breath-mark :codec (:form :breath-mark))
+     (:dynamic event-dynamic :codec (:form :dynamic))
+     (:lyrics event-lyrics :codec (:forms :lyric)))
+    (:chord chord-event make-chord-event
+     (:notes chord-event-notes :codec (:forms :chord-note) :always t)
+     (:duration event-duration :always t)
+     (:tuplet event-tuplet)
+     (:grace event-grace)
+     (:articulations event-articulations :codec (:forms :articulation))
+     (:fermata event-fermata :codec (:form :fermata))
+     (:breath-mark event-breath-mark :codec (:form :breath-mark))
+     (:dynamic event-dynamic :codec (:form :dynamic))
+     (:lyrics event-lyrics :codec (:forms :lyric)))
+    (:chord-note chord-note make-chord-note
+     (:pitch note-pitch :codec :pitch :always t)
+     (:accidental note-accidental :default :auto)
+     (:tie note-tie :codec (:form :tie)))
+    (:tie tie make-tie
+     (:end tie-end :always t))
+    (:articulation articulation make-articulation
+     (:kind articulation-kind :always t))
+    (:fermata fermata make-fermata
+     (:shape fermata-shape :default :normal))
+    (:breath-mark breath-mark make-breath-mark)
+    (:dynamic dynamic-mark make-dynamic-mark
+     (:value dynamic-mark-value :always t))
+    (:lyric lyric make-lyric
+     (:verse lyric-verse :default 1)
+     (:text lyric-text :always t)
+     (:syllabic lyric-syllabic :default :single)
+     (:extender lyric-extender))
+    (:chord-symbol chord-symbol-anchor make-chord-symbol-anchor
+     ((:bar :offset) anchor-position :codec :position :initarg :position :always t)
+     (:symbol anchor-symbol :codec :chord-symbol :always t))
+    (:spanner spanner make-spanner
+     (:kind spanner-kind :always t)
+     (:start spanner-start :always t)
+     (:end spanner-end :always t)))
+  "The canonical forms of the elements (sexp.lisp), as data: see above.")
+
+(defstruct (%field (:constructor %make-field (key reader codec initarg default always))
+                   (:copier nil) (:predicate nil))
+  (key nil :read-only t)
+  (reader nil :read-only t)
+  (codec :value :read-only t)
+  (initarg nil :read-only t)
+  (default nil :read-only t)
+  (always nil :read-only t))
+
+(defstruct (%form-row (:constructor %make-form-row (kind class constructor fields children))
+                      (:copier nil) (:predicate nil))
+  "A parsed +ELEMENT-FORMS+ row. CHILDREN holds the child fields of FIELDS, in
+document order."
+  (kind nil :read-only t)
+  (class nil :read-only t)
+  (constructor nil :read-only t)
+  (fields '() :read-only t)
+  (children '() :read-only t))
+
+(defun %parse-field (spec)
+  (destructuring-bind (key reader &key (codec :value) (initarg key) default always) spec
+    (%make-field key reader codec initarg default always)))
+
+(defun %child-field-p (field)
+  (let ((codec (%field-codec field)))
+    (and (consp codec) (member (car codec) '(:form :forms :voice-measures)) t)))
+
+(defun %parse-form-row (row)
+  (destructuring-bind (kind class constructor &rest specs) row
+    (let ((fields (mapcar #'%parse-field
+                          (append '((:id element-id))
+                                  specs
+                                  '((:provenance element-provenance :codec :provenance)
+                                    (:confidence element-confidence))))))
+      (%make-form-row kind class constructor fields (remove-if-not #'%child-field-p fields)))))
+
+(defparameter +form-rows+ (mapcar #'%parse-form-row +element-forms+)
+  "+ELEMENT-FORMS+ parsed, with the common fields added.")
+
+(defun %element-row (element)
+  "The grammar row of ELEMENT's class."
+  (or (find-if (lambda (row) (typep element (%form-row-class row))) +form-rows+)
+      (error 'type-error :datum element
+                         :expected-type (cons 'or (mapcar #'%form-row-class +form-rows+)))))
+
+(defun %kind-row (kind)
+  (find kind +form-rows+ :key #'%form-row-kind))
+
+(defun %field-value (field element)
+  (funcall (%field-reader field) element))
+
+;;; The walk --------------------------------------------------------------------
+
+(defun %field-children (field value)
+  "The elements in VALUE, the value of the child FIELD, in order."
+  (ecase (car (%field-codec field))
+    (:form (and value (list value)))
+    (:forms value)
+    (:voice-measures
+     (loop for events in (fset:convert 'list value)
+           append (fset:convert 'list events)))))
+
+(defun %element-children (element)
+  "ELEMENT's children in document order (ids.lisp)."
+  (loop for field in (%form-row-children (%element-row element))
+        append (%field-children field (%field-value field element))))
+
+(defun %max-serial (elements)
+  "The largest serial among the ids of ELEMENTS and everything inside them, or
+0. References (tie ends, spanner endpoints) aren't ids of elements."
+  (let ((max 0))
+    (labels ((visit (element)
+               (let ((serial (%id-serial (element-id element))))
+                 (when (and serial (> serial max)) (setf max serial)))
+               (mapc #'visit (%element-children element))))
+      (mapc #'visit elements))
+    max))
+
+;;; Minting and rebuilding -------------------------------------------------------
+
+(defun %rebuild (element row id replacements)
+  "A new instance of ELEMENT's class with ID, the child field values in the
+alist REPLACEMENTS (field . value), and every other slot value unchanged."
+  (apply #'make-instance (class-of element)
+         (loop for field in (%form-row-fields row)
+               for replacement = (assoc field replacements)
+               nconc (list (%field-initarg field)
+                           (cond ((eq (%field-key field) :id) id)
+                                 (replacement (cdr replacement))
+                                 (t (%field-value field element)))))))
+
+(defun %mint-list (elements next-id)
+  "(values elements changed-p): ELEMENTS minted in order; the same list when
+nothing in it changed."
+  (let* ((changed nil)
+         (result (mapcar (lambda (element)
+                           (multiple-value-bind (new new-p) (%mint element next-id)
+                             (when new-p (setf changed t))
+                             new))
+                         elements)))
+    (if changed (values result t) (values elements nil))))
+
+(defun %mint-field (field value next-id)
+  "(values value changed-p) for the child FIELD's VALUE, minted in order."
+  (ecase (car (%field-codec field))
+    (:form (if value (%mint value next-id) (values nil nil)))
+    (:forms (%mint-list value next-id))
+    (:voice-measures
+     ;; Replace only the voice measures that changed.
+     (let ((result value) (changed nil))
+       (dotimes (i (fset:size value) (values result changed))
+         (multiple-value-bind (events events-p)
+             (%mint-list (fset:convert 'list (fset:@ value i)) next-id)
+           (when events-p
+             (setf changed t
+                   result (fset:with result i (fset:convert 'fset:seq events))))))))))
+
+(defun %mint (element next-id)
+  "(values element changed-p): ELEMENT with an id from NEXT-ID (a function of
+the element) for it and for everything inside it that has none, in document
+order. The element takes its id before its children. ELEMENT itself (EQ) when
+nothing needed one; otherwise a rebuilt element. Never changes ELEMENT."
+  (let* ((old-id (element-id element))
+         (id (or old-id (funcall next-id element)))
+         (row (%element-row element))
+         (replacements '()))
+    (dolist (field (%form-row-children row))
+      (multiple-value-bind (value changed) (%mint-field field (%field-value field element) next-id)
+        (when changed (push (cons field value) replacements))))
+    (if (or (null old-id) replacements)
+        (values (%rebuild element row id replacements) t)
+        (values element nil))))
+
+;;; The index --------------------------------------------------------------------
+
+(defstruct (%entry (:constructor %make-entry) (:copier nil) (:predicate nil))
+  "One element of a score in its place: its PARENT element, its ORDER in the
+document, and the PART, VOICE and EVENT it is inside (or is). MEASURE is the
+index of its measure (measure-map elements) or voice measure (events and what
+is on them), OFFSET its offset there; both NIL for parts, staves, voices,
+anchors and spanners."
+  (element nil :read-only t)
+  (parent nil :read-only t)
+  (order 0 :read-only t)
+  (part nil :read-only t)
+  (voice nil :read-only t)
+  (event nil :read-only t)
+  (measure nil :read-only t)
+  (offset nil :read-only t))
+
+(defstruct (%score-index (:constructor %make-score-index (by-id entries bars))
+                         (:copier nil) (:predicate nil))
+  "The private index of a score: BY-ID, an FSet map from id to the entry of its
+first carrier; ENTRIES, every entry in document order (a simple-vector); BARS,
+the bar table (measure-map.lisp)."
+  (by-id nil :read-only t)
+  (entries #() :read-only t)
+  (bars nil :read-only t))
+
+(defun %build-index (measures parts anchors spanners)
+  "The index of the final element tree."
+  (let ((entries '()) (order -1) (by-id (fset:empty-map)))
+    (labels ((add (element parent part voice event measure offset)
+               (let ((entry (%make-entry :element element :parent parent :order (incf order)
+                                         :part part :voice voice :event event
+                                         :measure measure :offset offset))
+                     (id (element-id element)))
+                 (push entry entries)
+                 (unless (nth-value 1 (fset:lookup by-id id))
+                   (setf by-id (fset:with by-id id entry)))))
+             (visit (element parent part voice event measure offset)
+               (add element parent part voice event measure offset)
+               (typecase element
+                 (part
+                  (dolist (child (%element-children element))
+                    (visit child element element nil nil nil nil)))
+                 (voice
+                  (let ((measures (voice-measures element)))
+                    (dotimes (j (fset:size measures))
+                      (let ((at 0))
+                        (dolist (event (fset:convert 'list (fset:@ measures j)))
+                          (visit event element part element event j at)
+                          (unless (%grace-p event) (incf at (event-duration event))))))))
+                 (t
+                  (dolist (child (%element-children element))
+                    (visit child element part voice event measure
+                           (if (typep child 'tempo-mark) (tempo-mark-offset child) offset)))))))
+      (loop for measure in measures
+            for i from 0
+            do (visit measure nil nil nil nil i 0))
+      (dolist (part parts) (visit part nil part nil nil nil nil))
+      (dolist (anchor anchors) (visit anchor nil nil nil nil nil nil))
+      (dolist (spanner spanners) (visit spanner nil nil nil nil nil nil)))
+    (%make-score-index by-id (coerce (nreverse entries) 'simple-vector)
+                       (%compute-bar-table measures))))
+
+(defun %score-index (score)
+  (slot-value score 'index))
+
+(defmethod %score-bars ((score score))
+  (%score-index-bars (%score-index score)))
+
+(defun %entry-of (score id)
+  "The entry of the first carrier of ID in SCORE, or NIL."
+  (values (fset:lookup (%score-index-by-id (%score-index score)) id)))
+
+(defun %unknown-element (id)
+  "Signal UNKNOWN-ELEMENT for ID inside a USE-VALUE restart; return the
+restart's value."
+  (restart-case (error 'unknown-element :id id)
+    (use-value (value)
+      :report "Return a value instead."
+      :interactive (lambda ()
+                     (format *query-io* "~&Value to return: ")
+                     (finish-output *query-io*)
+                     (list (read *query-io*)))
+      value)))
+
+;;; Construction ---------------------------------------------------------------
+
+(defun %metadata-p (object)
+  "True when OBJECT is a proper plist of distinct +METADATA-KEYS+ keys to strings."
+  (loop with seen = '()
+        for tail = object then (cddr tail)
+        until (null tail)
+        always (and (consp tail) (consp (cdr tail))
+                    (member (car tail) +metadata-keys+)
+                    (not (member (car tail) seen))
+                    (stringp (cadr tail)))
+        do (push (car tail) seen)))
+
+(defun %canonical-metadata (metadata)
+  "A fresh METADATA plist with its keys in +METADATA-KEYS+ order."
+  (loop for key in +metadata-keys+
+        for value = (getf metadata key)
+        when value nconc (list key value)))
+
+(defun %measures-p (object) (%list-or-seq-of-p object 'measure-info))
+(defun %parts-p (object) (%list-or-seq-of-p object 'part))
+(defun %anchors-p (object) (%list-or-seq-of-p object 'chord-symbol-anchor))
+(defun %spanners-p (object) (%list-or-seq-of-p object 'spanner))
+
+(defun %position< (a b)
+  "True when the (bar . offset) position A is earlier than B."
+  (or (< (car a) (car b))
+      (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+
 (defun make-score (&key metadata measures parts chord-symbols spanners (id-counter 0))
   "A SCORE (file header): ids minted, chord symbols sorted, elements indexed."
-  (declare (ignorable metadata measures parts chord-symbols spanners id-counter))
-  (%sc0-pending 'make-score))
+  (check-type metadata (satisfies %metadata-p)
+              "a plist of distinct +METADATA-KEYS+ keys to strings")
+  (check-type measures (satisfies %measures-p) "a list or FSet seq of MEASURE-INFOs")
+  (check-type parts (satisfies %parts-p) "a list or FSet seq of PARTs")
+  (check-type chord-symbols (satisfies %anchors-p)
+              "a list or FSet seq of CHORD-SYMBOL-ANCHORs")
+  (check-type spanners (satisfies %spanners-p) "a list or FSet seq of SPANNERs")
+  (check-type id-counter (integer 0))
+  (let* ((measures (fset:convert 'list measures))
+         (parts (fset:convert 'list parts))
+         ;; The track is sorted before minting: document order is track order.
+         (anchors (stable-sort (copy-list (fset:convert 'list chord-symbols))
+                               #'%position< :key #'anchor-position))
+         (spanners (fset:convert 'list spanners))
+         (counter (max id-counter (%max-serial (append measures parts anchors spanners)))))
+    (flet ((next-id (element)
+             (%minted-id (%id-prefix element) (incf counter)))
+           (mint-all (elements next-id)
+             (mapcar (lambda (element) (values (%mint element next-id))) elements)))
+      ;; LET* keeps score order: measures, parts, anchors, spanners.
+      (let* ((measures (mint-all measures #'next-id))
+             (parts (mint-all parts #'next-id))
+             (anchors (mint-all anchors #'next-id))
+             (spanners (mint-all spanners #'next-id)))
+        (make-instance 'score
+                       :metadata (%canonical-metadata metadata)
+                       :measure-map (fset:convert 'fset:seq measures)
+                       :parts (fset:convert 'fset:seq parts)
+                       :chord-symbols (fset:convert 'fset:seq anchors)
+                       :spanners (fset:convert 'fset:seq spanners)
+                       :id-counter counter
+                       :index (%build-index measures parts anchors spanners))))))
 
 (defun copy-score (score &key (metadata nil metadata-p) (measures nil measures-p)
                               (parts nil parts-p) (chord-symbols nil chord-symbols-p)
                               (spanners nil spanners-p))
   "MAKE-SCORE with each omitted argument taken from SCORE, and SCORE's id counter."
-  (declare (ignorable score metadata metadata-p measures measures-p parts parts-p
-                      chord-symbols chord-symbols-p spanners spanners-p))
-  (%sc0-pending 'copy-score))
+  (check-type score score)
+  (make-score :metadata (if metadata-p metadata (score-metadata score))
+              :measures (if measures-p measures (score-measure-map score))
+              :parts (if parts-p parts (score-parts score))
+              :chord-symbols (if chord-symbols-p chord-symbols (score-chord-symbols score))
+              :spanners (if spanners-p spanners (score-spanners score))
+              :id-counter (score-id-counter score)))
+
+;;; Lookups -------------------------------------------------------------------------
 
 (defun score-elements (score)
   "A fresh list of every element of SCORE, in document order (ids.lisp)."
-  (declare (ignorable score))
-  (%sc0-pending 'score-elements))
+  (check-type score score)
+  (map 'list #'%entry-element (%score-index-entries (%score-index score))))
 
 (defgeneric find-element (score id &key errorp)
   (:documentation "The element of SCORE with ID (file header)."))
 
 (defmethod find-element ((score score) id &key (errorp t))
-  (declare (ignorable id errorp))
-  (%sc0-pending 'find-element))
+  (let ((entry (%entry-of score id)))
+    (cond (entry (%entry-element entry))
+          (errorp (%unknown-element id))
+          (t nil))))
 
 (defgeneric element-parent (score id)
   (:documentation "The element above the element with ID, or NIL (file header)."))
 
 (defmethod element-parent ((score score) id)
-  (declare (ignorable id))
-  (%sc0-pending 'element-parent))
+  (let ((entry (%entry-of score id)))
+    (if entry
+        (%entry-parent entry)
+        (%unknown-element id))))
 
 (defgeneric element-position (score id)
   (:documentation "The (bar . offset) of the element with ID, or NIL (measure-map.lisp)."))
 
+(defun %entry-position (score entry seen)
+  "The position of ENTRY's element (measure-map.lisp). SEEN holds the spanner
+entries already followed, so a chain of spanners that loops gives NIL."
+  (let ((element (%entry-element entry)))
+    (typecase element
+      (chord-symbol-anchor
+       (let ((position (anchor-position element)))
+         (cons (car position) (cdr position))))
+      (spanner
+       (let ((start (%entry-of score (spanner-start element))))
+         (and start
+              (not (member start seen))
+              (%entry-position score start (cons entry seen)))))
+      (t
+       (let ((measure (%entry-measure entry)))
+         (and measure
+              (cons (+ (score-first-bar score) measure) (%entry-offset entry))))))))
+
 (defmethod element-position ((score score) id)
-  (declare (ignorable id))
-  (%sc0-pending 'element-position))
+  (let ((entry (%entry-of score id)))
+    (if entry
+        (%entry-position score entry (list entry))
+        (%unknown-element id))))
 
 (defun find-slice (score slice-id &key (errorp t))
   "(values measure element) for SLICE-ID (ids.lisp)."
-  (declare (ignorable score slice-id errorp))
-  (%sc0-pending 'find-slice))
+  (check-type score score)
+  (check-type slice-id string)
+  (let* ((dot (position #\. slice-id))
+         (measure-id (and dot (subseq slice-id 0 dot)))
+         (element-id (and dot (subseq slice-id (1+ dot))))
+         (measure (and (valid-id-p measure-id) (find-element score measure-id :errorp nil)))
+         (element (and (valid-id-p element-id) (find-element score element-id :errorp nil))))
+    (cond ((and (typep measure 'measure-info) (typep element '(or part staff voice)))
+           (values measure element))
+          (errorp (%unknown-element slice-id))
+          (t nil))))
 
 (defun uncertain-elements (score &key (below 0.8))
   "The elements of SCORE with a CONFIDENCE below BELOW, in document order."
-  (declare (ignorable score below))
-  (%sc0-pending 'uncertain-elements))
+  (check-type score score)
+  (check-type below real)
+  (loop for entry across (%score-index-entries (%score-index score))
+        for element = (%entry-element entry)
+        for confidence = (element-confidence element)
+        when (and confidence (< confidence below))
+          collect element))

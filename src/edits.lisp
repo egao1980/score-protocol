@@ -27,7 +27,12 @@
 ;;;; and the new score shares structure with it. APPLY-EDIT does this, in order:
 ;;;;  1. Preconditions: the ids OP names exist and are of the right kind, its
 ;;;;     positions lie in the score, and the rest each operation states. They
-;;;;     are checked in the order of OP's slots, before anything changes.
+;;;;     are checked in the order of OP's slots, before anything changes. First
+;;;;     of all (SC3), no element OP holds carries or refers to a DRAFT-REF
+;;;;     (builder.lisp): refs are for building, and an operation with one
+;;;;     signals INVALID-EDIT with REASON "draft reference". A COMPOSITE-EDIT's
+;;;;     members are checked each in its own step 1, so the condition names the
+;;;;     member.
 ;;;;  2. The change, by the operation's rules.
 ;;;;  3. Ids: every element without one is minted (Ids, below).
 ;;;;  4. The cascade: a tie or spanner of SCORE that the change broke is removed.
@@ -113,6 +118,20 @@
 ;;;; MEASURE-OVERFULL adds REFLOW. TYPE-ERRORs from element constructors and
 ;;;; music-theory's own conditions are not wrapped, except where an operation
 ;;;; says so.
+;;;; After REFLOW the operation being applied is the reflowed one: the same
+;;;; INSERT-EVENT with REFLOW true. Every condition signalled after the
+;;;; restart, the EDIT-BREAKS-SCORE of step 5 included, names that operation
+;;;; as OP (SC3), so (edit-reflow (invalid-edit-op c)) is true. A member of a
+;;;; COMPOSITE-EDIT is reflowed the same way; a failed check still names the
+;;;; composite.
+;;;;
+;;;; Cost. APPLY-EDIT runs CHECK-SCORE up to three times (on SCORE, after the
+;;;; change, after the cascade) and walks the whole score to share structure
+;;;; and compute the change set, so one edit is O(n) in the size of the score
+;;;; whatever its own size. That suits batch edits and edit logs. An editor
+;;;; that applies an edit per keystroke should measure it on its largest
+;;;; scores first (200 bars, four parts); checks scoped to the change set are
+;;;; possible future work, not part of this contract.
 ;;;;
 ;;;; INVERT-EDIT score op → an operation INV such that, with
 ;;;; (values after changes) = (apply-edit score op):

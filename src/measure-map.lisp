@@ -72,6 +72,17 @@
 ;;;; An invalid position, an offset outside 0..SCORE-DURATION, or a bar outside
 ;;;; first..last bar (for the BAR-* functions) signals INVALID-POSITION with
 ;;;; POSITION = the argument, inside a USE-VALUE restart whose value is returned.
+;;;; Its REASON says what is wrong (SC3):
+;;;;   BAR-* functions, and ABSOLUTE-OFFSET for a bar that isn't one of the
+;;;;     score's            "no such bar"
+;;;;   ABSOLUTE-OFFSET, offset < 0
+;;;;                        "negative offset"
+;;;;   ABSOLUTE-OFFSET, offset > BAR-LENGTH
+;;;;                        "offset past the end of bar B (length L)", B the bar
+;;;;                        and L its BAR-LENGTH printed with ~A: so (0 . 1/2)
+;;;;                        in a score whose pickup is a quarter gives "offset
+;;;;                        past the end of bar 0 (length 1/4)"
+;;;;   OFFSET-POSITION      "outside the score": its argument is an instant.
 ;;;; With no measures, every position and every bar is invalid. A position that
 ;;;; isn't a cons, a bar that isn't an integer and an offset that isn't a
 ;;;; rational are TYPE-ERRORs.

@@ -14,7 +14,8 @@
 ;;;; character is a letter (A-Z, a-z) and whose others are letters, digits, "-"
 ;;;; or "_". So an id is an XML NCName (an xs:ID, as MusicXML 4.0 id and MEI
 ;;;; xml:id attributes are), with no colon, space or "." (slice ids use the dot).
-;;;; Constructors signal TYPE-ERROR for an ID that is neither NIL nor valid.
+;;;; Constructors signal TYPE-ERROR for an ID that is neither NIL, a valid id
+;;;; nor a DRAFT-REF (builder.lisp, SC3: a placeholder MAKE-SCORE replaces).
 ;;;;
 ;;;; Minted ids are a PREFIX, "-", and a SERIAL: an integer >= 1 written in base
 ;;;; 36 with the digits 0-9 a-z, lower case, no leading zero. So serial 12 in an
@@ -36,10 +37,12 @@
 ;;;; The id counter. A score records SCORE-ID-COUNTER, the highest serial minted
 ;;;; or seen in it. MAKE-SCORE sets the counter to the largest of its :ID-COUNTER
 ;;;; argument (default 0) and every serial among the ids of the elements it is
-;;;; given (references don't count). It then visits the elements in document
-;;;; order, and gives each one whose ID is NIL the id PREFIX-(counter + 1),
-;;;; incrementing the counter. Minting is the only thing that consumes serials,
-;;;; and a minted id never equals an id that was given.
+;;;; given (references don't count; in a draft, a preferred id a carrier takes
+;;;; counts as given, builder.lisp). It then visits the elements in document
+;;;; order, and gives each one whose ID is NIL (in a draft, or a DRAFT-REF that
+;;;; took no preferred id) the id PREFIX-(counter + 1), incrementing the counter.
+;;;; Minting is the only thing that consumes serials, and a minted id never
+;;;; equals an id that was given.
 ;;;;
 ;;;; Document order is the pre-order walk of the element tree: an element, then
 ;;;; its children, each child followed by its own children. Children come in
@@ -98,11 +101,13 @@
 ;;;; UNKNOWN-ELEMENT (ID = the string) inside a USE-VALUE restart whose value it
 ;;;; returns.
 ;;;;
-;;;; References. A tie's END and a spanner's START and END hold ids. So an
-;;;; element that is referenced needs its id when the referring element is
-;;;; built: give it one, any unique valid string, when you construct it.
-;;;; Duplicate ids are a CHECK-SCORE issue (:DUPLICATE-ID); FIND-ELEMENT then
-;;;; finds the first carrier in document order.
+;;;; References. A tie's END and a spanner's START and END hold ids. An element
+;;;; that is referenced either gets its id when it is constructed (any unique
+;;;; valid string), or carries a DRAFT-REF that the referring tie or spanner
+;;;; names too; MAKE-SCORE then mints or settles its id and puts it in every
+;;;; reference, in the same call (builder.lisp, SC3). A score's references are
+;;;; always id strings. Duplicate ids are a CHECK-SCORE issue (:DUPLICATE-ID);
+;;;; FIND-ELEMENT then finds the first carrier in document order.
 
 (in-package #:score-protocol)
 

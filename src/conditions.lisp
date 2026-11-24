@@ -13,10 +13,22 @@
 ;;;;     MEASURE-OVERFULL adds REFLOW (the same INSERT-EVENT with REFLOW true).
 ;;;;     Which operation signals which subtype, and when: edits.lisp.
 ;;;;   MusicXML readers (SC2): MUSICXML-UNSUPPORTED inside SKIP-ELEMENT.
+;;;;   MAKE-SCORE of a draft (SC3, builder.lisp): UNRESOLVED-REFERENCE for a
+;;;;     ref that no element carries inside a USE-VALUE restart, whose value
+;;;;     (an id string) is stored in the reference; for a ref carried twice,
+;;;;     with no restart. BUILDER-ID: UNRESOLVED-REFERENCE inside a USE-VALUE
+;;;;     restart whose value is returned.
 ;;;;
 ;;;; Warnings: LOSSY-CONVERSION is signalled with WARN. LOW-CONFIDENCE-GUESS is
 ;;;; signalled with SIGNAL, so it is silent unless a handler is bound (importers
 ;;;; record the guess in the element's confidence either way).
+;;;;
+;;;; LOSSY-CONVERSION (SC3) has a DIRECTION: :TO (the default) when a score is
+;;;; written to FORMAT and something the format can't carry is left out, :FROM
+;;;; when a file of FORMAT is read and something the model can't hold is
+;;;; dropped. Its report names the direction: "lossy conversion to midi: ids
+;;;; dropped" for a writer, "lossy conversion from musicxml: <ornaments>
+;;;; dropped" for a reader. Readers pass :DIRECTION :FROM.
 ;;;;
 ;;;; Malformed SMF input belongs to midi-protocol, which has nothing
 ;;;; score-specific; score-backend-midi reports it as a SCORE-FORMAT-ERROR whose
@@ -115,8 +127,20 @@ edit did not have (edits.lisp). ISSUES holds them.")
 
 (define-condition score-warning (warning) ())
 
+(define-condition unresolved-reference (score-error)
+  ((key :initarg :key :initform nil :reader unresolved-reference-key
+        :documentation "The key of the DRAFT-REF (builder.lisp)."))
+  (:documentation "A draft ref that can't be resolved: no element carries it, two
+do, or no built score carried it (builder.lisp, SC3).")
+  (:report (lambda (c s)
+             (format s "unresolved draft reference ~S~@[: ~A~]"
+                     (unresolved-reference-key c) (score-error-reason c)))))
+
 (define-condition lossy-conversion (score-warning)
   ((format :initarg :format :initform nil :reader lossy-conversion-format)
+   (direction :initarg :direction :initform :to :reader lossy-conversion-direction
+              :documentation ":TO when writing a score to FORMAT, :FROM when reading
+a file of FORMAT (file header).")
    (what :initarg :what :initform nil :reader lossy-conversion-what
          :documentation "A short description of what was dropped, e.g. \"ids\"."))
   (:report (lambda (c s)

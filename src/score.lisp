@@ -25,11 +25,16 @@
 ;;;; map), so lookups don't walk the score. An element that had its id, and
 ;;;; everything inside it too, is stored as the same (EQ) object; an element
 ;;;; that gets a minted id, or contains one that does, is rebuilt with its other
-;;;; slots unchanged.
+;;;; slots unchanged. The elements may form a draft (SC3, builder.lisp): ids and
+;;;; tie and spanner references that are DRAFT-REFs are resolved in the same
+;;;; call, and an element that carries or refers to one is rebuilt like an
+;;;; element that gets a minted id. The score holds no refs.
 ;;;;
 ;;;; COPY-SCORE score &key metadata measures parts chord-symbols spanners is
 ;;;; MAKE-SCORE with each omitted argument taken from SCORE, and :ID-COUNTER
-;;;; (score-id-counter score). Unchanged parts of the score are shared.
+;;;; (score-id-counter score). Unchanged parts of the score are shared. So new
+;;;; elements added to a score with COPY-SCORE may be a draft too: their
+;;;; references may name SCORE's ids (strings) or refs.
 ;;;;
 ;;;; Lookups:
 ;;;;   SCORE-ELEMENTS score: a fresh list of every element, in document order.

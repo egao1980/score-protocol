@@ -58,9 +58,10 @@
 ;;;;   The walk keeps PASS (the time through the current section, from 1),
 ;;;;   whether a jump has been taken (JUMPED), and the MODE of that jump (NIL,
 ;;;;   :FINE or :CODA). It starts at the first measure, and at each measure m:
-;;;;    1. When m starts an ENDING: it is played when PASS is among its PASSES
-;;;;       or, once JUMPED, when it is the last ending of its group; otherwise
-;;;;       the walk goes on at the measure after the ending's measures.
+;;;;    1. When m starts an ENDING: before a jump (JUMPED false) it is played
+;;;;       when PASS is among its PASSES; after a jump, when it is the last
+;;;;       ending of its group, whatever PASS is. Otherwise the walk goes on at
+;;;;       the measure after the ending's measures.
 ;;;;    2. Entering a section start s(e) other than by repeating sets PASS to 1.
 ;;;;    3. m is played: it is the next measure of the view.
 ;;;;    4. At the end of m, the first of these that applies:
@@ -75,9 +76,17 @@
 ;;;;          :DAL-SEGNO; on at the first measure (D.C.) or at the last measure
 ;;;;          at or before m with a :SEGNO mark (D.S.; with none, SCORE-ERROR).
 ;;;;       e. on at the next measure; after the last one the walk ends.
-;;;;   So after a jump repeats are not taken again and the last ending of each
-;;;;   group is played; a plain D.C. or D.S. plays to the end; Fine and To Coda
-;;;;   act only after a jump that asks for them.
+;;;;   So after a jump repeats are not taken again and only the last ending of
+;;;;   each group is played; a plain D.C. or D.S. plays to the end; Fine and To
+;;;;   Coda act only after a jump that asks for them.
+;;;;   The walk always ends, so it has no step limit (SC3): each D.C. or D.S.
+;;;;   mark is taken at most once; repeats are taken only before the first
+;;;;   jump; a repeat goes back to s(m), after every earlier REPEAT-END measure,
+;;;;   so it never re-enters an earlier section, and it is taken at most
+;;;;   REPEAT-END - 1 times in a row; every other move goes forward. A
+;;;;   REPEAT-END of any size unfolds in full: one measure with REPEAT-END 100
+;;;;   gives 100 view measures, passes 1 to 100. The only SCORE-ERROR of the
+;;;;   walk is a D.S. with no segno.
 ;;;;   The PASS of a measure of the view is how many times its source measure
 ;;;;   has been played up to and including it (1 the first time).
 ;;;;   The view. Its measures are copies of the played measures, in order: the

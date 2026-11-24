@@ -40,7 +40,8 @@
 ;;;;     FSet seq of events, stored as an FSet seq of FSet seqs.
 ;;;;
 ;;;; Classes, slots (readers), types and defaults:
-;;;;   ELEMENT       ID (or null id), PROVENANCE, CONFIDENCE
+;;;;   ELEMENT       ID (or null id), PROVENANCE, CONFIDENCE. In a draft (SC3,
+;;;;                 builder.lisp) ID may also be a DRAFT-REF.
 ;;;;   PART          NAME, ABBREVIATION (or null string); STAVES, a non-empty
 ;;;;                 list of STAFFs; VOICES, a non-empty list of VOICEs
 ;;;;   STAFF         CLEF, a keyword of +CLEFS+, default :TREBLE
@@ -73,12 +74,14 @@
 ;;;;   FERMATA       SHAPE, a keyword of +FERMATAS+, default :NORMAL
 ;;;;   BREATH-MARK   no slots of its own
 ;;;;   ARTICULATION  KIND, a keyword of +ARTICULATIONS+ (required)
-;;;;   TIE           END, the id of the note it ties to (required)
+;;;;   TIE           END, the id of the note it ties to (required); in a draft,
+;;;;                 an id or a DRAFT-REF
 ;;;;   CHORD-SYMBOL-ANCHOR  POSITION, a (bar . offset) cons, bar an integer >= 0
 ;;;;                 and offset a rational >= 0 (required); SYMBOL, a music-theory
 ;;;;                 CHORD-SYMBOL, N.C. allowed (required)
 ;;;;   SPANNER       KIND, a keyword of +SPANNER-KINDS+ (required); START, END,
-;;;;                 the ids of its first and last events (required)
+;;;;                 the ids of its first and last events (required); in a
+;;;;                 draft, each an id or a DRAFT-REF
 ;;;;
 ;;;; Grace events (GRACE non-NIL) take no time: their DURATION is the notated
 ;;;; value, and they don't count toward a measure's rhythm.

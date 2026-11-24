@@ -99,3 +99,115 @@ failing rows, each paired with the list of failed check indices."
     (chord-note "n") (lyric "ly") (dynamic-mark "dy") (fermata "fe") (breath-mark "br")
     (articulation "ar") (tie "ti") (tempo-mark "tm") (rehearsal-mark "rh") (jump-mark "jm")
     (ending "en") (chord-symbol-anchor "h") (spanner "sp")))
+
+;;; SC1 helpers ---------------------------------------------------------------
+;;; Independent of the implementation: the change set, the shallow form and
+;;; sharing are recomputed here from the canonical forms (src/edits.lisp).
+
+(defun element-form-p (x)
+  (and (consp x) (member (car x) +element-kinds+) t))
+
+(defun shallow-form (form)
+  "FORM (an element's canonical form) with every child form replaced by its id."
+  (cons (car form)
+        (loop for (key value) on (cdr form) by #'cddr
+              nconc (list key
+                          (cond ((element-form-p value) (getf (cdr value) :id))
+                                ((and (consp value) (every #'element-form-p value))
+                                 (mapcar (lambda (f) (getf (cdr f) :id)) value))
+                                ((and (eq key :measures) (listp value)
+                                      (every #'listp value)
+                                      (every (lambda (m) (every #'element-form-p m)) value))
+                                 (mapcar (lambda (m) (mapcar (lambda (f) (getf (cdr f) :id)) m))
+                                         value))
+                                (t value))))))
+
+(defun element-table (score)
+  "id → element of SCORE (first carrier)."
+  (let ((table (make-hash-table :test 'equal)))
+    (dolist (e (score-elements score) table)
+      (unless (gethash (element-id e) table)
+        (setf (gethash (element-id e) table) e)))))
+
+(defun expected-change-set (old new)
+  "(created removed modified) from OLD to NEW, by the rules of src/edits.lisp."
+  (let ((old-table (element-table old))
+        (new-table (element-table new)))
+    (list (loop for e in (score-elements new)
+                unless (gethash (element-id e) old-table) collect (element-id e))
+          (loop for e in (score-elements old)
+                unless (gethash (element-id e) new-table) collect (element-id e))
+          (loop for e in (score-elements new)
+                for o = (gethash (element-id e) old-table)
+                when (and o (not (equal (shallow-form (element-to-sexp e))
+                                        (shallow-form (element-to-sexp o)))))
+                  collect (element-id e)))))
+
+(defun change-lists (change-set)
+  (list (change-set-created change-set) (change-set-removed change-set)
+        (change-set-modified change-set)))
+
+(defun unshared (old new)
+  "Ids of elements of NEW equal in canonical form to OLD's element with that id
+but not EQ to it."
+  (let ((old-table (element-table old)))
+    (loop for e in (score-elements new)
+          for o = (gethash (element-id e) old-table)
+          when (and o (not (eq e o)) (equal (element-to-sexp e) (element-to-sexp o)))
+            collect (element-id e))))
+
+(defun expand-user (form)
+  "FORM with each element form's :USER T replaced by the provenance and
+confidence an edit gives (src/edits.lisp): test rows stay short."
+  (cond ((atom form) form)
+        ((element-form-p form)
+         (cons (car form)
+               (loop for (key value) on (cdr form) by #'cddr
+                     nconc (if (eq key :user)
+                               (list :provenance '(:source :user) :confidence 1)
+                               (list key (expand-user value))))))
+        (t (cons (expand-user (car form)) (expand-user (cdr form))))))
+
+(defun ev-form (x) (if (element-form-p x) (sexp-to-element x) x))
+
+(defun apply-op (score op)
+  "(values new-score (created removed modified))."
+  (multiple-value-bind (new changes) (apply-edit score op)
+    (values new (change-lists changes))))
+
+(defun voice-form (score id)
+  "The :measures of the voice ID's canonical form."
+  (getf (cdr (element-to-sexp (find-element score id))) :measures))
+
+(defun form-of (score id)
+  (element-to-sexp (find-element score id)))
+
+(defun condition-of (thunk)
+  "The condition THUNK signals, or NIL. Restarts are not invoked."
+  (handler-case (progn (funcall thunk) nil)
+    (condition (c) c)))
+
+(defun with-restart (type restart thunk &rest args)
+  "Call THUNK with a handler that invokes RESTART (with ARGS) for conditions of TYPE."
+  (handler-bind ((condition (lambda (c)
+                              (when (typep c type)
+                                (apply #'invoke-restart (find-restart restart c) args)))))
+    (funcall thunk)))
+
+(defun measure-ids (score)
+  (mapcar #'element-id (seq-list (score-measure-map score))))
+
+(defun find-restart-p (type restart thunk)
+  "True when THUNK signals a condition of TYPE with RESTART available."
+  (block found
+    (handler-bind ((condition (lambda (c)
+                                (when (typep c type)
+                                  (return-from found (and (find-restart restart c) t))))))
+      (funcall thunk)
+      nil)))
+
+
+(defun quoted-rows (rows)
+  "ROWS with every value quoted: DEFTEST-PARAMETRIZE splices :ROWS values into
+code, so a list value must arrive as (QUOTE list)."
+  (mapcar (lambda (row) (mapcar (lambda (value) (list 'quote value)) row)) rows))

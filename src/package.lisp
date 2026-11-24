@@ -6,9 +6,9 @@
   (:use #:cl)
   (:nicknames #:stack-score)
   (:documentation "The score model, stable element ids, provenance and confidence, the
-measure map and positions, validation and the canonical s-expression form (SC0).
-Later slices add the edit-operation algebra and the views (SC1); formats live
-in backends (score-backend-musicxml, score-backend-midi).")
+measure map and positions, validation and the canonical s-expression form (SC0);
+the edit-operation algebra and the condensed, unfolded and extracted views
+(SC1). Formats live in backends (score-backend-musicxml, score-backend-midi).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:score-error #:score-error-reason
@@ -23,6 +23,10 @@ in backends (score-backend-musicxml, score-backend-midi).")
    #:lossy-conversion #:lossy-conversion-format #:lossy-conversion-what
    #:low-confidence-guess #:low-confidence-guess-element-id
    #:low-confidence-guess-what #:low-confidence-guess-confidence
+   #:edit-target-missing #:edit-position-invalid
+   #:measure-overfull #:measure-overfull-voice #:measure-overfull-bar
+   #:measure-overfull-excess #:reflow
+   #:edit-breaks-score
    ;; Ids (SC0; see ids.lisp)
    #:valid-id-p #:slice-id #:find-slice
    ;; Provenance and the element base class (SC0)
@@ -80,6 +84,42 @@ in backends (score-backend-musicxml, score-backend-midi).")
    #:check-score #:validate-score
    ;; The canonical s-expression form (SC0; see sexp.lisp)
    #:score-to-sexp #:sexp-to-score #:element-to-sexp #:sexp-to-element
-   #:score-equal))
+   #:score-equal
+   ;; The edit algebra (SC1; see edits.lisp)
+   #:edit-operation #:apply-edit #:invert-edit #:compose-edits
+   #:edit-to-sexp #:sexp-to-edit
+   #:change-set #:make-change-set #:change-set-p #:change-set-created
+   #:change-set-removed #:change-set-modified #:change-set-empty-p
+   #:composite-edit #:make-composite-edit #:edit-ops
+   ;; Edits of events and marks (SC1; see edit-events.lisp)
+   #:insert-event #:make-insert-event #:delete-event #:make-delete-event
+   #:replace-event #:make-replace-event
+   #:set-voice-measures #:make-set-voice-measures
+   #:set-pitch #:make-set-pitch #:set-accidental #:make-set-accidental
+   #:set-duration #:make-set-duration
+   #:add-mark #:make-add-mark #:remove-mark #:make-remove-mark
+   #:add-spanner #:make-add-spanner #:remove-spanner #:make-remove-spanner
+   #:add-chord-symbol #:make-add-chord-symbol
+   #:remove-chord-symbol #:make-remove-chord-symbol
+   ;; Edits of measures, and transposition (SC1; see edit-measures.lisp)
+   #:set-key #:make-set-key #:set-time #:make-set-time
+   #:replace-measure #:make-replace-measure
+   #:insert-measures #:make-insert-measures
+   #:delete-measures #:make-delete-measures
+   #:transpose #:make-transpose
+   ;; Operation slots (SC1; shared readers)
+   #:edit-id #:edit-voice #:edit-measure #:edit-offset #:edit-event #:edit-reflow
+   #:edit-measures #:edit-measure-info #:edit-measure-infos #:edit-pitch
+   #:edit-accidental #:edit-duration #:edit-tuplet
+   #:edit-target #:edit-mark #:edit-spanner #:edit-anchor #:edit-key #:edit-time
+   #:edit-before #:edit-contents #:edit-count #:edit-interval #:edit-to-key
+   #:edit-parts #:edit-from #:edit-to
+   ;; Views (SC1; see views.lisp)
+   #:condensed-view #:unfold #:extract-part))
 
 (in-package #:score-protocol)
+
+(defun %sc1-pending (name)
+  "Contract stub for slice SC1. Every call is replaced by the implementation,
+then this function is deleted."
+  (error "score-protocol SC1 pending: ~A" name))

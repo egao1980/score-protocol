@@ -118,8 +118,3 @@ the edit-operation algebra and the condensed, unfolded and extracted views
    #:condensed-view #:unfold #:extract-part))
 
 (in-package #:score-protocol)
-
-(defun %sc1-pending (name)
-  "Contract stub for slice SC1. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "score-protocol SC1 pending: ~A" name))

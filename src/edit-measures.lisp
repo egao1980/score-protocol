@@ -231,22 +231,363 @@ BEFORE (file header)."
   (make-instance 'transpose :interval interval :to-key to-key :parts (copy-list parts)
                             :from from :to to))
 
-;;; Application ---------------------------------------------------------------
+;;; Shared rules ---------------------------------------------------------------------
 
-(defmethod apply-edit ((score score) (op set-key))
-  (%sc1-pending 'apply-edit/set-key))
+(defun %signatures-kept (measure old-time old-key new-time new-key &optional first)
+  "MEASURE keeping its signatures (file header): with no TIME of its own it gets
+OLD-TIME, the meter in force at it before, when NEW-TIME (what it inherits after
+the change) differs, or always when it becomes the FIRST measure; the same for
+KEY. MEASURE itself when nothing changes."
+  (flet ((kept (own old new)
+           (and (null own) (or first (not (equalp new old))) old)))
+    (let ((time (kept (measure-info-time measure) old-time new-time))
+          (key (kept (measure-info-key measure) old-key new-key)))
+      (if (or time key)
+          (apply #'%user measure (append (and time (list :time time)) (and key (list :key key))))
+          measure))))
 
-(defmethod apply-edit ((score score) (op set-time))
-  (%sc1-pending 'apply-edit/set-time))
+(defun %keep-at (draft j old-bars i &optional first)
+  "DRAFT, a list of measures, with its measure J keeping the signatures it had at
+index I of OLD-BARS (%SIGNATURES-KEPT)."
+  (let* ((new-bars (%compute-bar-table draft))
+         (measure (nth j draft))
+         (kept (%signatures-kept measure
+                                 (svref (%bar-table-times old-bars) i) (svref (%bar-table-keys old-bars) i)
+                                 (svref (%bar-table-times new-bars) j) (svref (%bar-table-keys new-bars) j)
+                                 first)))
+    (if (eq kept measure)
+        draft
+        (append (subseq draft 0 j) (list kept) (nthcdr (1+ j) draft)))))
 
-(defmethod apply-edit ((score score) (op replace-measure))
-  (%sc1-pending 'apply-edit/replace-measure))
+(defun %anchors-staying (score new-bars index)
+  "SCORE's anchors after a change of the measure map: each stays with its measure
+(file header), INDEX mapping its old measure index to the new one (NIL: the
+anchor goes; :KEEP: it is left as it is)."
+  (let ((old-first (%bar-table-first (%score-bars score)))
+        (count (%bar-count (%score-bars score)))
+        (anchors '()))
+    (dolist (anchor (%anchor-list score) (nreverse anchors))
+      (let* ((position (anchor-position anchor))
+             (i (- (car position) old-first))
+             (j (if (< -1 i count) (funcall index i anchor) :keep)))
+        (cond ((null j))
+              ((eq j :keep) (push anchor anchors))
+              ((consp j) (push (%moved-anchor anchor j) anchors))
+              (t (push (%moved-anchor anchor (cons (+ (%bar-table-first new-bars) j) (cdr position)))
+                       anchors)))))))
 
-(defmethod apply-edit ((score score) (op insert-measures))
-  (%sc1-pending 'apply-edit/insert-measures))
+(defun %moved-anchor (anchor position)
+  "ANCHOR at POSITION: itself when it is there already, else changed (:USER)."
+  (if (equal position (anchor-position anchor))
+      anchor
+      (%user anchor :position position)))
 
-(defmethod apply-edit ((score score) (op delete-measures))
-  (%sc1-pending 'apply-edit/delete-measures))
+(defun %map-voices (score fn)
+  "SCORE's parts with every voice v replaced by (funcall fn v part)."
+  (mapcar (lambda (part)
+            (values (%map-children part (lambda (child)
+                                          (if (typep child 'voice)
+                                              (let ((new (funcall fn child part)))
+                                                (values new (not (eq new child))))
+                                              (values child nil))))))
+          (%part-list score)))
 
-(defmethod apply-edit ((score score) (op transpose))
-  (%sc1-pending 'apply-edit/transpose))
+(defun %with-span (voice from below cells)
+  "VOICE with its voice measures FROM..BELOW-1 replaced by CELLS (event lists)."
+  (let ((seq (voice-measures voice)))
+    (%rebuild voice (%element-row voice) (element-id voice)
+              (list (cons (%row-field voice :measures)
+                          (fset:concat (fset:subseq seq 0 from)
+                                       (fset:convert 'fset:seq (mapcar (lambda (cell) (fset:convert 'fset:seq cell))
+                                                                       cells))
+                                       (fset:subseq seq below)))))))
+
+;;; SET-KEY, REPLACE-MEASURE ---------------------------------------------------------
+
+(defmethod %edit-change ((op set-key) (score score))
+  (let ((measure (%target score op (edit-measure op) 'measure-info "a measure")))
+    (if (equalp (measure-info-key measure) (edit-key op))
+        score
+        (%substitute-1 score measure (%user measure :key (edit-key op))))))
+
+(defmethod %edit-change ((op replace-measure) (score score))
+  (let ((old (%target score op (edit-id op) 'measure-info "a measure"))
+        (new (edit-measure-info op)))
+    (unless (member (element-id new) (list nil (edit-id op)) :test #'equal)
+      (%refuse op "the new measure has another id"))
+    (%check-given score op (list new) (list old))
+    (%substitute-1 score old (%with-id new (edit-id op)))))
+
+;;; INSERT-MEASURES, DELETE-MEASURES ---------------------------------------------------
+
+(defun %first-of-staff-p (voice part)
+  "True when VOICE is the first of PART's voices on its staff."
+  (eq voice (find (voice-staff voice) (part-voices part) :key #'voice-staff)))
+
+(defmethod %edit-change ((op insert-measures) (score score))
+  (let* ((before (and (edit-before op)
+                      (%target-entry score op (edit-before op) 'measure-info "a measure")))
+         (infos (edit-measure-infos op))
+         (n (length infos))
+         (bars (%score-bars score))
+         (measures (%measure-list score))
+         (count (length measures))
+         (p (if before (%entry-measure before) count))
+         (contents '()))
+    (%check-given score op infos '())
+    (dolist (entry (edit-contents op))
+      (let ((voice (%target score op (car entry) 'voice "a voice")))
+        (unless (= n (length (cdr entry)))
+          (%refuse op "contents of the wrong length"))
+        (when (assoc voice contents)
+          (%refuse op "a voice named twice in the contents"))
+        (push (cons voice (cdr entry)) contents)))
+    (%check-given score op (loop for entry in contents append (apply #'append (cdr entry))) '())
+    (let* ((infos (if (and (zerop p) measures)
+                      ;; The new first measure takes the old first one's signatures.
+                      (let* ((new (first infos))
+                             (old (first measures))
+                             (time (and (null (measure-info-time new)) (measure-info-time old)))
+                             (key (and (null (measure-info-key new)) (measure-info-key old))))
+                        (if (or time key)
+                            (cons (apply #'%user new (append (and time (list :time time))
+                                                             (and key (list :key key))))
+                                  (rest infos))
+                            infos))
+                      infos))
+           (draft (append (subseq measures 0 p) infos (nthcdr p measures)))
+           (draft (if (< p count) (%keep-at draft (+ p n) bars p) draft))
+           (new-bars (%compute-bar-table draft))
+           (parts (%map-voices
+                   score
+                   (lambda (voice part)
+                     (%with-span voice p p
+                                 (or (cdr (assoc voice contents))
+                                     (loop for j from p below (+ p n)
+                                           collect (and (%first-of-staff-p voice part)
+                                                        (list (apply #'make-rest-event
+                                                                     :duration (svref (%bar-table-lengths new-bars) j)
+                                                                     :measure-rest-p t (%user-provenance))))))))))
+           (anchors (%anchors-staying score new-bars (lambda (i anchor)
+                                                      (declare (ignore anchor))
+                                                      (if (>= i p) (+ i n) i)))))
+      (%build-score score :measures draft :parts parts :anchors anchors))))
+
+(defmethod %edit-change ((op delete-measures) (score score))
+  (let* ((entry (%target-entry score op (edit-measure op) 'measure-info "a measure"))
+         (i (%entry-measure entry))
+         (c (edit-count op))
+         (bars (%score-bars score))
+         (measures (%measure-list score))
+         (count (length measures)))
+    (when (> (+ i c) count)
+      (%off op (+ (%bar-table-first bars) count) "past the end of the score"))
+    (let* ((draft (append (subseq measures 0 i) (nthcdr (+ i c) measures)))
+           (draft (if (< (+ i c) count) (%keep-at draft i bars (+ i c) (zerop i)) draft))
+           (new-bars (%compute-bar-table draft))
+           (parts (%map-voices score (lambda (voice part)
+                                       (declare (ignore part))
+                                       (%with-span voice i (+ i c) '()))))
+           (anchors (%anchors-staying score new-bars (lambda (j anchor)
+                                                      (declare (ignore anchor))
+                                                      (cond ((< j i) j)
+                                                            ((< j (+ i c)) nil)
+                                                            (t (- j c)))))))
+      (%build-score score :measures draft :parts parts :anchors anchors))))
+
+;;; SET-TIME --------------------------------------------------------------------------
+
+(defun %lost-mark-p (measure)
+  "True when re-barring can't remove MEASURE without losing something on it."
+  (or (measure-info-key measure) (measure-info-jump measure) (measure-info-rehearsal measure)
+      (measure-info-ending measure) (measure-info-repeat-start measure)
+      (measure-info-repeat-end measure)))
+
+(defmethod %edit-change ((op set-time) (score score))
+  (let* ((entry (%target-entry score op (edit-measure op) 'measure-info "a measure"))
+         (measure (%entry-element entry))
+         (time (edit-time op))
+         (bars (%score-bars score))
+         (starts (%bar-table-starts bars))
+         (lengths (%bar-table-lengths bars))
+         (measures (%measure-list score))
+         (count (length measures))
+         (i0 (%entry-measure entry))
+         (i1 (or (position-if #'measure-info-time measures :start (1+ i0)) count))
+         (s (svref starts i0))
+         (r (loop for k from i0 below i1 sum (svref lengths k)))
+         (b (music-theory:meter-measure-duration
+             (or time (if (plusp i0) (svref (%bar-table-times bars) (1- i0)) (music-theory:make-meter)))))
+         (pickup (and (zerop i0) (measure-info-pickup-p measure)))
+         (new-lengths (multiple-value-bind (k remainder) (floor (- r (if pickup (svref lengths i0) 0)) b)
+                        (append (and pickup (list (svref lengths i0)))
+                                (make-list k :initial-element b)
+                                (and (plusp remainder) (list remainder)))))
+         (new-starts (let ((at s)) (mapcar (lambda (length) (prog1 at (incf at length))) new-lengths)))
+         (k1 (length new-lengths))
+         (region (subseq measures i0 i1))
+         (old-starts (loop for k from i0 below i1 collect (svref starts k)))
+         (last-old (car (last region)))
+         (kept (mapcar (lambda (start) (let ((k (position start old-starts))) (and k (nth k region))))
+                       new-starts)))
+    (dolist (m region)
+      (when (and (not (member m kept :test #'eq)) (%lost-mark-p m))
+        (%refuse op "re-barring would remove a measure with a key, a repeat, an ending, a jump or a rehearsal mark")))
+    (flet ((new-bar-of (offset)
+             (or (position-if (lambda (start) (<= start offset)) new-starts :from-end t) 0)))
+      (let* ((tempos (loop for m in region
+                           for start in old-starts
+                           append (mapcar (lambda (mark) (cons (+ start (tempo-mark-offset mark)) mark))
+                                          (measure-info-tempo m))))
+             (new-region
+               (loop for j from 0 below k1
+                     for length in new-lengths
+                     for start in new-starts
+                     for old = (nth j kept)
+                     for own-length = (if (or (and pickup (zerop j)) (/= length b)) length nil)
+                     for barline = (cond ((= j (1- k1)) (measure-info-barline last-old))
+                                         ((eq old last-old) :regular)
+                                         (old (measure-info-barline old))
+                                         (t :regular))
+                     for marks = (loop for (offset . mark) in tempos
+                                       when (= (new-bar-of offset) j)
+                                         collect (if (= (- offset start) (tempo-mark-offset mark))
+                                                     mark
+                                                     (%user mark :offset (- offset start))))
+                     collect (cond ((null old)
+                                    (apply #'make-measure-info :length own-length :barline barline
+                                                               :tempo marks (%user-provenance)))
+                                   ((and (eql own-length (measure-info-length old))
+                                         (equalp (if (zerop j) time (measure-info-time old))
+                                                 (measure-info-time old))
+                                         (eq barline (measure-info-barline old)))
+                                    (if (%cell-eq marks (measure-info-tempo old))
+                                        old
+                                        (%remake old :tempo marks)))
+                                   (t (%user old :length own-length :barline barline :tempo marks
+                                                 :time (if (zerop j) time (measure-info-time old)))))))
+             (draft (append (subseq measures 0 i0) new-region (nthcdr i1 measures)))
+             (new-bars (%compute-bar-table draft))
+             (shift (- k1 (- i1 i0)))
+             (parts (%map-voices
+                     score
+                     (lambda (voice part)
+                       (declare (ignore part))
+                       (let ((slots (loop for slot in (%voice-slots voice bars)
+                                          when (and (<= s (%slot-onset slot)) (< (%slot-onset slot) (+ s r)))
+                                            collect (%make-slot (%slot-onset slot) (%slot-event slot)
+                                                                (%slot-graces slot) (%slot-trailing slot) t))))
+                         (%with-span voice i0 i1 (%assemble op slots '() new-bars i0 (+ i0 k1 -1)))))))
+             (anchors (%anchors-staying
+                       score new-bars
+                       (lambda (i anchor)
+                         (cond ((< i i0) i)
+                               ((>= i i1) (+ i shift))
+                               (t (let* ((offset (+ (svref starts i) (cdr (anchor-position anchor))))
+                                         (j (new-bar-of offset)))
+                                    (cons (+ (%bar-table-first new-bars) i0 j)
+                                          (- offset (nth j new-starts))))))))))
+        (%build-score score :measures draft :parts parts :anchors anchors)))))
+
+;;; TRANSPOSE ----------------------------------------------------------------------
+
+(defun %moving (op fn &rest arguments)
+  "FN applied to ARGUMENTS, a music-theory transposition: a result beyond two
+accidentals (INVALID-PITCH) is INVALID-EDIT, the one translated condition."
+  (handler-case (apply fn arguments)
+    (music-theory:invalid-pitch () (%refuse op "a pitch beyond two accidentals"))))
+
+(defmethod %edit-change ((op transpose) (score score))
+  (let ((interval (edit-interval op))
+        (to-key (edit-to-key op)))
+    (unless (if interval (null to-key) to-key)
+      (%refuse op "exactly one of INTERVAL and TO-KEY must be given"))
+    (let* ((parts (mapcar (lambda (id) (%target score op id 'part "a part")) (edit-parts op)))
+           (bars (%score-bars score))
+           (count (%bar-count bars))
+           (first (%bar-table-first bars))
+           (fi (if (edit-from op)
+                   (%entry-measure (%target-entry score op (edit-from op) 'measure-info "a measure"))
+                   0))
+           (ti (if (edit-to op)
+                   (%entry-measure (%target-entry score op (edit-to op) 'measure-info "a measure"))
+                   (1- count))))
+      (when (> fi ti)
+        (%off op (+ first ti) "the range runs backwards"))
+      (let* ((every-part (or (null parts) (every (lambda (part) (member part parts)) (%part-list score))))
+             (keys (%bar-table-keys bars))
+             (from-key (svref keys fi))
+             (moved (make-array count :initial-element nil))
+             (target (make-array count :initial-element nil))
+             (measures (%measure-list score))
+             (table (make-hash-table :test 'eq)))
+        (labels ((move-pitch (pitch)
+                   (if interval
+                       (%moving op #'music-theory:transpose-pitch pitch interval)
+                       (%moving op #'music-theory:transpose-to-key pitch from-key to-key)))
+                 (move-key (key)
+                   (let ((tonic (music-theory:key-tonic key)))
+                     (music-theory:make-key
+                      :tonic (if interval
+                                 (music-theory:pitch-spelling
+                                  (%moving op #'music-theory:transpose-pitch
+                                           (music-theory:make-spelled-pitch
+                                            :letter (music-theory:pitch-class-name-letter tonic)
+                                            :alter (music-theory:pitch-class-name-alter tonic)
+                                            :octave 4)
+                                           interval))
+                                 (%moving op #'music-theory:transpose-to-key tonic from-key to-key))
+                      :mode (music-theory:key-mode key))))
+                 (respell-p (i)
+                   (and every-part (not (equalp (aref target i) (aref moved i)))))
+                 (note-pitch-at (pitch i)
+                   (let ((pitch (move-pitch pitch)))
+                     (if (respell-p i)
+                         (%moving op #'music-theory:transpose-to-key pitch (aref moved i) (aref target i))
+                         pitch)))
+                 (symbol-at (symbol i)
+                   (let ((symbol (%moving op #'music-theory:transpose-chord-symbol symbol
+                                          (or interval (list from-key to-key)))))
+                     (if (respell-p i)
+                         (%moving op #'music-theory:transpose-chord-symbol symbol
+                                  (list (aref moved i) (aref target i)))
+                         symbol))))
+          (loop for i from fi to ti
+                do (setf (aref moved i) (move-key (svref keys i))
+                         (aref target i) (music-theory:choose-enharmonic-key (aref moved i)
+                                                                             :max-accidentals 7)))
+          ;; Notes.
+          (dolist (part (or parts (%part-list score)))
+            (dolist (voice (part-voices part))
+              (loop for i from fi to (min ti (1- (fset:size (voice-measures voice))))
+                    do (dolist (event (%cell voice i))
+                         (dolist (note (typecase event
+                                         (note-event (list event))
+                                         (chord-event (chord-event-notes event))))
+                           (let ((pitch (note-pitch-at (note-pitch note) i)))
+                             (unless (equalp pitch (note-pitch note))
+                               (setf (gethash note table) (%user note :pitch pitch)))))))))
+          (when every-part
+            ;; Keys: the range's own keys, FROM's, and the measure after TO keeping its own.
+            (loop for i from fi to ti
+                  for measure = (nth i measures)
+                  when (and (or (measure-info-key measure) (= i fi))
+                            (not (equalp (measure-info-key measure) (aref target i))))
+                    do (setf (gethash measure table) (%user measure :key (aref target i))))
+            (when (< (1+ ti) count)
+              (let* ((after (nth (1+ ti) measures))
+                     (last (loop for i from ti downto fi
+                                 when (or (measure-info-key (nth i measures)) (= i fi)) return i)))
+                (when (and (null (measure-info-key after))
+                           (not (equalp (aref target last) (svref keys (1+ ti)))))
+                  (setf (gethash after table) (%user after :key (svref keys (1+ ti)))))))
+            ;; Chord symbols in the range.
+            (dolist (anchor (%anchor-list score))
+              (let ((i (- (car (anchor-position anchor)) first)))
+                (when (<= fi i ti)
+                  (let ((symbol (symbol-at (anchor-symbol anchor) i)))
+                    (unless (equal (%chord-symbol-to-sexp symbol) (%chord-symbol-to-sexp (anchor-symbol anchor)))
+                      (setf (gethash anchor table) (%user anchor :symbol symbol)))))))))
+        (if (zerop (hash-table-count table))
+            score
+            (%substitute score table))))))

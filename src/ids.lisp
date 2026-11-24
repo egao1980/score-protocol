@@ -1,0 +1,113 @@
+;;;; SC0 element ids: syntax, minting, document order, stability, slice ids.
+;;;;
+;;;; Every element (an instance of ELEMENT: measures, parts, staves, voices,
+;;;; events, chord notes, lyrics, chord-symbol anchors, spanners) has an ID, a
+;;;; string unique in its score. The scheme is self-contained: ids are minted by
+;;;; this library from the score alone (no clock, no randomness, no global
+;;;; state, nothing from a file format or a renderer), and they are data in the
+;;;; score. They are persistent and not positional: an element's place in the
+;;;; score never enters its id, so ids survive edits and re-barring. Ids are
+;;;; opaque: code never parses one to learn about its element; it asks
+;;;; FIND-ELEMENT.
+;;;;
+;;;; Syntax (VALID-ID-P): a non-empty string of ASCII characters whose first
+;;;; character is a letter (A-Z, a-z) and whose others are letters, digits, "-"
+;;;; or "_". So an id is an XML NCName (an xs:ID, as MusicXML 4.0 id and MEI
+;;;; xml:id attributes are), with no colon, space or "." (slice ids use the dot).
+;;;; Constructors signal TYPE-ERROR for an ID that is neither NIL nor valid.
+;;;;
+;;;; Minted ids are a PREFIX, "-", and a SERIAL: an integer >= 1 written in base
+;;;; 36 with the digits 0-9 a-z, lower case, no leading zero. So serial 12 in an
+;;;; event is "e-c", and serial 40 is "e-14". The prefix comes from the
+;;;; element's class through +ID-PREFIXES+: m measure, p part, st staff, v voice,
+;;;; e event (rest, note and chord events all use "e", so an event that changes
+;;;; kind keeps a truthful id), n chord note, ly lyric, h chord-symbol anchor, sp
+;;;; spanner. The hyphen keeps minted ids apart from engravers' generated ids,
+;;;; which are bare letters and digits. A string HAS SERIAL k when it is one of
+;;;; those prefixes, "-", and k written that way, whatever element carries it.
+;;;; Other valid ids have no serial: "P1", "e12", "e-0c", "E-C", "x-9".
+;;;;
+;;;; The id counter. A score records SCORE-ID-COUNTER, the highest serial minted
+;;;; or seen in it. MAKE-SCORE sets the counter to the largest of its :ID-COUNTER
+;;;; argument (default 0) and every serial among the ids of the elements it is
+;;;; given (references don't count). It then visits the elements in document
+;;;; order, and gives each one whose ID is NIL the id PREFIX-(counter + 1),
+;;;; incrementing the counter. Minting is the only thing that consumes serials,
+;;;; and a minted id never equals an id that was given.
+;;;;
+;;;; Document order is the pre-order walk of the element tree:
+;;;;   score        its measures (map order), its parts, its chord-symbol
+;;;;                anchors (track order), then its spanners
+;;;;   part         the part, its staves in order, then its voices in order
+;;;;   voice        the voice, then its events: voice measure by voice
+;;;;                measure, each in order
+;;;;   chord event  the event, its notes in order, then its lyrics
+;;;;   other event  the event, then its lyrics
+;;;; Lyrics are kept in verse order (elements.lisp). SCORE-ELEMENTS lists the
+;;;; elements in this order. Minting is therefore deterministic: equal input
+;;;; gets equal ids, and a score built from elements with no ids and no
+;;;; :ID-COUNTER numbers them 1..N in document order (m-1, m-2, p-3, st-4, ...,
+;;;; e-a, e-b, ...).
+;;;;
+;;;; Stability. An element keeps its id for as long as it exists.
+;;;;   * MAKE-SCORE and COPY-SCORE keep every id they are given. COPY-SCORE
+;;;;     passes the counter on, so an element added later never gets the serial
+;;;;     of one that was removed: a serial is used at most once in the lineage of
+;;;;     a score (the chain of scores built from it).
+;;;;   * Edits (SC1) keep the id of every element they change in place (a new
+;;;;     pitch, duration, lyric text, provenance...). An edit that splits an
+;;;;     element (a duration that overflows the barline becomes tied notes) keeps
+;;;;     the id on the first piece in time and mints the others; one that merges
+;;;;     elements keeps the id of the first. Re-barring keeps the ids of the
+;;;;     events it moves. An element that is deleted and then inserted again by a
+;;;;     new edit is a new element with a new id; only INVERT-EDIT brings back
+;;;;     the ids its inverse removed.
+;;;;   * Views (SC1) keep the ids of the elements they carry over. An element a
+;;;;     view copies more than once (UNFOLD) keeps its id in the first copy; the
+;;;;     others get minted ids, and the view's id map gives each one its source id.
+;;;;   * Serialization keeps ids verbatim. SCORE-TO-SEXP writes every id and the
+;;;;     counter; SEXP-TO-SCORE restores both, so the copy mints the same next id
+;;;;     as the original. A format that carries ids (MusicXML, MEI) writes and
+;;;;     reads them verbatim. A reader of a file with no ids mints them in
+;;;;     document order like MAKE-SCORE, so the same file always reads with the
+;;;;     same ids. A format that can't carry them (MIDI) warns LOSSY-CONVERSION
+;;;;     on write, and its importer mints fresh ones.
+;;;;
+;;;; Slice ids. A measure spans every part, so one part's, staff's or voice's
+;;;; share of a measure is a separate kind (a part's <measure> in MusicXML; a
+;;;; <staff> or <layer> inside an MEI <measure>). Slices aren't elements: they
+;;;; hold nothing of their own. Their ids are derived from two persistent ids:
+;;;; (slice-id measure-id element-id) is MEASURE-ID "." ELEMENT-ID, so
+;;;; "m-3.p-4"; it signals TYPE-ERROR unless both are valid ids. A slice id is an
+;;;; NCName that no element can have, and no two pairs give the same one, since
+;;;; element ids never contain ".". FIND-SLICE score slice-id → (values measure
+;;;; element): the MEASURE-INFO and the PART, STAFF or VOICE it names. For a
+;;;; string that isn't the slice id of a measure and a part, staff or voice of
+;;;; the score, FIND-SLICE returns NIL when :ERRORP is false, else signals
+;;;; UNKNOWN-ELEMENT (ID = the string) inside a USE-VALUE restart whose value it
+;;;; returns.
+;;;;
+;;;; References. A tie (NOTE-TIE) and a spanner's START and END hold ids. So an
+;;;; element that is referenced needs its id when the referring element is
+;;;; built: give it one, any unique valid string, when you construct it.
+;;;; Duplicate ids are a CHECK-SCORE issue (:DUPLICATE-ID); FIND-ELEMENT then
+;;;; finds the first carrier in document order.
+
+(in-package #:score-protocol)
+
+(defparameter +id-prefixes+
+  '((measure-info . "m") (part . "p") (staff . "st") (voice . "v") (event . "e")
+    (chord-note . "n") (lyric . "ly") (chord-symbol-anchor . "h") (spanner . "sp"))
+  "Element class → the prefix of its minted ids (before the \"-\"); an element
+takes the first row whose class it is an instance of. These are also the only
+prefixes that give a string a serial. Data.")
+
+(defun valid-id-p (object)
+  "True when OBJECT is a string in the id syntax of the file header."
+  (declare (ignorable object))
+  (%sc0-pending 'valid-id-p))
+
+(defun slice-id (measure-id element-id)
+  "The id of ELEMENT-ID's share of the measure MEASURE-ID: \"m-3.p-4\"."
+  (declare (ignorable measure-id element-id))
+  (%sc0-pending 'slice-id))

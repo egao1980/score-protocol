@@ -139,7 +139,7 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
 ;;; Classes ------------------------------------------------------------------
 
 (defclass element ()
-  ((id :initarg :id :initform nil :reader element-id :type (or null string))
+  ((id :initarg :id :initform nil :reader element-id :type (or null string draft-ref))
    (provenance :initarg :provenance :initform nil :reader element-provenance
                :type (or null provenance))
    (confidence :initarg :confidence :initform nil :reader element-confidence
@@ -205,7 +205,8 @@ accidental display, and its TIE to the next note."))
 
 (defclass tie (element)
   ((end :initarg :end :reader tie-end
-        :documentation "The id of the note this tie ends on.")))
+        :documentation "The id of the note this tie ends on; in a draft, an id or a
+DRAFT-REF (builder.lisp).")))
 
 (defclass lyric (element)
   ((verse :initarg :verse :initform 1 :reader lyric-verse)
@@ -219,8 +220,10 @@ accidental display, and its TIE to the next note."))
 
 (defclass spanner (element)
   ((kind :initarg :kind :reader spanner-kind)
-   (start :initarg :start :reader spanner-start)
-   (end :initarg :end :reader spanner-end)))
+   (start :initarg :start :reader spanner-start
+          :documentation "The id of its first event; in a draft, an id or a DRAFT-REF.")
+   (end :initarg :end :reader spanner-end
+        :documentation "The id of its last event; in a draft, an id or a DRAFT-REF.")))
 
 (defmethod print-object ((element element) stream)
   (print-unreadable-object (element stream :type t :identity (null (element-id element)))
@@ -291,7 +294,7 @@ FSet seq of EVENTs."
 (defun %make-element (class id provenance confidence &rest initargs)
   "An instance of CLASS after checking the slots every element has. The
 constructors call it last, with their other slots checked and normalised."
-  (check-type id (or null %id) "NIL or an id string")
+  (check-type id (or null %id draft-ref) "NIL, an id string or a DRAFT-REF")
   (check-type provenance (or null provenance))
   (check-type confidence (or null (real 0 1)))
   (apply #'make-instance class :id id :provenance provenance :confidence confidence
@@ -408,8 +411,8 @@ events; it is stored as an FSet seq of FSet seqs."
   (%make-element 'articulation id provenance confidence :kind kind))
 
 (defun make-tie (&key id end provenance confidence)
-  "A TIE to the note whose id is END."
-  (check-type end %id "an id string")
+  "A TIE to the note whose id is END (in a draft, a DRAFT-REF)."
+  (check-type end (or %id draft-ref) "an id string or a DRAFT-REF")
   (%make-element 'tie id provenance confidence :end end))
 
 (defun make-lyric (&key id (verse 1) text (syllabic :single) extender provenance confidence)
@@ -428,10 +431,11 @@ events; it is stored as an FSet seq of FSet seqs."
                  :position (cons (car position) (cdr position)) :symbol symbol))
 
 (defun make-spanner (&key id kind start end provenance confidence)
-  "A SPANNER of KIND from the event with id START to the event with id END."
+  "A SPANNER of KIND from the event with id START to the event with id END (in a
+draft, either may be a DRAFT-REF)."
   (check-type kind (satisfies %spanner-kind-p) "a keyword of +SPANNER-KINDS+")
-  (check-type start %id "an id string")
-  (check-type end %id "an id string")
+  (check-type start (or %id draft-ref) "an id string or a DRAFT-REF")
+  (check-type end (or %id draft-ref) "an id string or a DRAFT-REF")
   (%make-element 'spanner id provenance confidence :kind kind :start start :end end))
 
 (defun %grace-p (event)

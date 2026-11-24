@@ -93,8 +93,14 @@
 
 (in-package #:score-protocol)
 
+;;; The state. A builder maps each key to its one ref; a ref belongs to exactly
+;;; one builder, so the id its carrier got is recorded in the ref itself, and
+;;; BUILDER-ID reads it through the builder's key table. The resolution walk
+;;; is MAKE-SCORE's (score.lisp); this file holds only what it calls at run time.
+
 (defclass score-builder ()
-  ()
+  ((refs :initform (make-hash-table :test 'equal) :reader %builder-refs
+         :documentation "Private: each key → its DRAFT-REF, keys compared with EQUAL."))
   (:documentation "Hands out DRAFT-REFs and records the ids MAKE-SCORE gives their
 carriers (file header). Build one with MAKE-SCORE-BUILDER."))
 
@@ -106,20 +112,66 @@ carriers (file header). Build one with MAKE-SCORE-BUILDER."))
   ((key :initarg :key :reader draft-ref-key
         :documentation "The key BUILDER-REF was given.")
    (prefer :initarg :prefer :initform nil :reader draft-ref-prefer
-           :documentation "NIL or the preferred id (file header, step 2)."))
+           :writer (setf %draft-ref-prefer)
+           :documentation "NIL or the preferred id (file header, step 2).")
+   (id :initform nil :accessor %draft-ref-id
+       :documentation "Private: the id its carrier got in the latest MAKE-SCORE that
+carried it, or NIL (file header: Reading the ids back)."))
   (:documentation "A placeholder for the id of the element that carries it, in a
 draft (file header). Get one with BUILDER-REF."))
 
-(defun %sc3-pending (name)
-  "Signal that NAME belongs to the SC3 contract and is not implemented yet."
-  (error "score-protocol SC3 pending: ~A" name))
+(defmethod print-object ((ref draft-ref) stream)
+  (print-unreadable-object (ref stream :type t :identity t)
+    (format stream "~S" (draft-ref-key ref))))
 
 (defun builder-ref (builder key &key prefer)
   "The DRAFT-REF of KEY in BUILDER, made on first use (file header)."
-  (declare (ignore builder key prefer))
-  (%sc3-pending 'builder-ref))
+  (check-type builder score-builder)
+  (check-type prefer (or null %id) "NIL or an id string")
+  (let* ((refs (%builder-refs builder))
+         (ref (or (gethash key refs)
+                  (setf (gethash key refs) (make-instance 'draft-ref :key key)))))
+    (when prefer
+      (setf (%draft-ref-prefer ref) prefer))
+    ref))
+
+(defun %unresolved-reference (key reason report)
+  "Signal UNRESOLVED-REFERENCE for KEY with REASON inside a USE-VALUE restart
+whose report is the string REPORT; return the restart's value."
+  (restart-case (error 'unresolved-reference :key key :reason reason)
+    (use-value (value)
+      :report (lambda (stream) (write-string report stream))
+      :interactive (lambda ()
+                     (format *query-io* "~&Value to use: ")
+                     (finish-output *query-io*)
+                     (list (read *query-io*)))
+      value)))
 
 (defun builder-id (builder key &key (errorp t))
   "The id the carrier of KEY's ref got in the latest MAKE-SCORE (file header)."
-  (declare (ignore builder key errorp))
-  (%sc3-pending 'builder-id))
+  (check-type builder score-builder)
+  ;; A lookup, never BUILDER-REF: reading an id interns no key.
+  (let* ((ref (values (gethash key (%builder-refs builder))))
+         (id (and ref (%draft-ref-id ref))))
+    (cond (id id)
+          (errorp (%unresolved-reference key "not carried in a built score"
+                                         "Return a value instead."))
+          (t nil))))
+
+;;; Called by MAKE-SCORE (score.lisp) -------------------------------------------
+
+(defun %dangling-reference (ref)
+  "Resolution step 5 for REF, which no element of the draft carries:
+UNRESOLVED-REFERENCE inside a USE-VALUE restart. The restart's value, an id
+string (else TYPE-ERROR, never a second UNRESOLVED-REFERENCE), is returned to
+stand in each reference to REF."
+  (let ((id (%unresolved-reference (draft-ref-key ref) "no element carries it"
+                                   "Use an id string for this reference.")))
+    (check-type id %id "an id string")
+    id))
+
+(defun %record-ids (carried)
+  "Record in each ref of CARRIED (an EQ hash table, ref → id) the id its carrier
+got. MAKE-SCORE calls it once its score exists, so a build that signals and is
+not continued records nothing (file header: Reading the ids back)."
+  (maphash (lambda (ref id) (setf (%draft-ref-id ref) id)) carried))

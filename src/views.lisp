@@ -263,13 +263,10 @@ header. Navigation is decided here and nowhere else."
                 (setf (svref section e) s
                       (svref section-start-p s) t
                       gp (g e)))))))
-      ;; The walk.
-      (let ((order '()) (pass 1) (jumped nil) (mode nil) (taken '()) (repeating nil)
-            (m 0) (steps 0) (limit (* 16 (1+ n) (1+ n))))
+      ;; The walk. It always ends (file header), so it counts no steps.
+      (let ((order '()) (pass 1) (jumped nil) (mode nil) (taken '()) (repeating nil) (m 0))
         (loop while (< m n)
-              do (when (> (incf steps) limit)
-                   (error 'score-error :reason "the navigation marks never reach an end"))
-                 (let ((ending (measure-info-ending (info m))))
+              do (let ((ending (measure-info-ending (info m))))
                    (if (and ending
                             (not (if jumped
                                      (eql m (svref last-start m))

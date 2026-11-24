@@ -584,13 +584,16 @@ CELLS; VOICE itself when none differs."
                      :event (edit-event op) :reflow t))
 
 (defun %overfull (op score voice bar excess)
-  "Signal MEASURE-OVERFULL inside the REFLOW restart, whose value is the change
-of OP with REFLOW true."
+  "Signal MEASURE-OVERFULL inside the REFLOW restart, whose values are the change
+of OP with REFLOW true and that reflowed operation, the one applied from then on
+(edits.lisp). Every call is in tail position of %EDIT-CHANGE, so both values
+reach APPLY-EDIT."
   (restart-case (error 'measure-overfull :op op :voice (element-id voice) :bar bar :excess excess
                                          :reason "the voice measure would overflow")
     (reflow ()
       :report "Insert with REFLOW true: re-flow the voice into the measures."
-      (%edit-change (%with-reflow op) score))))
+      (let ((reflowed (%with-reflow op)))
+        (values (%edit-change reflowed score) reflowed)))))
 
 (defun %insert-grace (cell offset event)
   "CELL with the grace EVENT right before its non-grace event at OFFSET."

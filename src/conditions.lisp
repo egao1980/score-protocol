@@ -144,8 +144,9 @@ a file of FORMAT (file header).")
    (what :initarg :what :initform nil :reader lossy-conversion-what
          :documentation "A short description of what was dropped, e.g. \"ids\"."))
   (:report (lambda (c s)
-             (format s "lossy conversion to ~(~A~)~@[: ~A dropped~]"
-                     (lossy-conversion-format c) (lossy-conversion-what c)))))
+             (format s "lossy conversion ~(~A~) ~(~A~)~@[: ~A dropped~]"
+                     (lossy-conversion-direction c) (lossy-conversion-format c)
+                     (lossy-conversion-what c)))))
 
 (define-condition low-confidence-guess (score-warning)
   ((element-id :initarg :element-id :initform nil :reader low-confidence-guess-element-id)

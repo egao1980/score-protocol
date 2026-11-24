@@ -320,10 +320,15 @@ restart's value."
     (check-type bar integer)
     (check-type offset rational)
     (let* ((table (%score-bars score))
-           (i (%bar-index table bar)))
-      (if (and i (<= 0 offset (svref (%bar-table-lengths table) i)))
-          (+ (svref (%bar-table-starts table) i) offset)
-          (%invalid-position position "outside the score")))))
+           (i (%bar-index table bar))
+           (length (and i (svref (%bar-table-lengths table) i))))
+      ;; The bar first, then the offset in it (file header: REASON).
+      (cond ((null i) (%invalid-position position "no such bar"))
+            ((< offset 0) (%invalid-position position "negative offset"))
+            ((> offset length)
+             (%invalid-position position (format nil "offset past the end of bar ~A (length ~A)"
+                                                 bar length)))
+            (t (+ (svref (%bar-table-starts table) i) offset))))))
 
 (defun offset-position (score offset)
   "The (bar . offset) position of the absolute OFFSET (file header)."

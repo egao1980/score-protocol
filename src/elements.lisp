@@ -20,10 +20,53 @@
 ;;;;               name of the system that produced the element, or NIL; PAGE,
 ;;;;               a page number >= 1, or NIL; BBOX, (x y width height) reals in
 ;;;;               the page's own units, or NIL; TIME-RANGE, (start end) seconds
-;;;;               in the source audio, or NIL.
+;;;;               in the source audio, or NIL; ORIGIN (0.4.0), NIL or an
+;;;;               ORIGIN (below).
 ;;;;   CONFIDENCE  NIL (not recorded: treated as certain), or a real 0..1.
 ;;;; An edit (SC1) sets the elements it changes to provenance :user and
-;;;; confidence 1.
+;;;; confidence 1, keeping their origin (edits.lisp).
+;;;;
+;;;; Origins (0.4.0, score-protocol#11). An element that a tool derived by
+;;;; REPLACING another one (a generator that rewrites a chord symbol, an OMR
+;;;; correction, a scripted edit) records what it replaced in its provenance,
+;;;; so the original can be restored from the score alone, with no side table.
+;;;; An ORIGIN is an immutable struct:
+;;;;   ID     the id of the element replaced, a valid id string (ids.lisp),
+;;;;          required. It is a record, not a reference: it need not name an
+;;;;          element of the score that holds the origin (the replaced element
+;;;;          is usually gone, or lives in another score), and it may equal any
+;;;;          id, its own element's included. CHECK-SCORE never reads it,
+;;;;          FIND-ELEMENT never finds it, and it takes no part in minting or in
+;;;;          the id counter (ids.lisp: origins are no elements and have no
+;;;;          serials that count).
+;;;;   VALUE  NIL, or a copy of the replaced element's value. 0.4.0 knows one
+;;;;          kind of value: a music-theory CHORD-SYMBOL, N.C. included, the
+;;;;          SYMBOL of a replaced chord-symbol anchor. NIL records the id
+;;;;          alone.
+;;;; MAKE-ORIGIN &key id value signals TYPE-ERROR (CHECK-TYPE) for an ID that
+;;;; is not a valid id string and for a VALUE that is neither NIL nor a
+;;;; CHORD-SYMBOL. ORIGIN-P, ORIGIN-ID and ORIGIN-VALUE read it. MAKE-PROVENANCE
+;;;; takes :ORIGIN (NIL or an ORIGIN; TYPE-ERROR otherwise), PROVENANCE-ORIGIN
+;;;; reads it. ELEMENT-ORIGIN element is the ORIGIN of ELEMENT's provenance:
+;;;; NIL when ELEMENT has no provenance or its provenance has no origin.
+;;;; An element with no origin, NIL, replaced nothing: generated material with
+;;;; nothing before it.
+;;;; An origin prints unreadably, with its id and its value printed by
+;;;; MUSIC-THEORY:PRINT-CHORD-SYMBOL in the :pop dialect, or "-" when it has
+;;;; none: #<ORIGIN h-3 G7>, #<ORIGIN e-12 ->.
+;;;; Where an origin goes:
+;;;;   * the canonical form writes it, inside :PROVENANCE (sexp.lisp), so the
+;;;;     s-expression round trip keeps it and SCORE-EQUAL compares it;
+;;;;   * MAKE-SCORE, COPY-SCORE and the views (views.lisp) store elements as
+;;;;     given, origins included: an element carried over is the same object;
+;;;;   * an edit keeps the origin of every element it leaves alone (they are
+;;;;     shared, EQ) and of every element whose own slots it changes; TRANSPOSE
+;;;;     moves a chord-symbol origin with its anchor (edits.lisp,
+;;;;     edit-measures.lisp); INVERT-EDIT restores elements as they were;
+;;;;   * formats need nothing new: a writer that can't carry provenance
+;;;;     already reports it (LOSSY-CONVERSION, "provenance and confidence"),
+;;;;     and an origin only ever travels inside a provenance, so the elements
+;;;;     a writer reports are the same with or without origins.
 ;;;;
 ;;;; Constructors (MAKE-PART, MAKE-NOTE-EVENT, MAKE-FERMATA, ...) take keyword
 ;;;; arguments named like the readers and signal TYPE-ERROR (CHECK-TYPE, with
@@ -127,14 +170,36 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
 (defparameter +spanner-kinds+ '(:slur :crescendo :diminuendo)
   "SPANNER-KIND values: a slur, or a hairpin. Data.")
 
-;;; Provenance ---------------------------------------------------------------
+;;; Provenance and origins ---------------------------------------------------
+
+(defun %sc4-pending (name)
+  "Signal that NAME belongs to the 0.4.0 (origin) contract and is not implemented yet."
+  (error "score-protocol 0.4.0 pending: ~A" name))
+
+(defstruct (origin (:constructor %make-origin (id value)) (:copier nil))
+  "What a derived element replaced (file header, Origins). Build one with MAKE-ORIGIN."
+  (id nil :type string :read-only t)
+  (value nil :read-only t))
+
+(defun make-origin (&key id value)
+  "An ORIGIN: the id of the element replaced, and NIL or its value (file header)."
+  (check-type id (satisfies valid-id-p) "a valid id string")
+  (check-type value (or null music-theory:chord-symbol) "NIL or a music-theory CHORD-SYMBOL")
+  (%make-origin id value))
+
+(defmethod print-object ((origin origin) stream)
+  ;; #<ORIGIN h-3 G7> (file header).
+  (declare (ignore stream))
+  (%sc4-pending 'print-object/origin))
 
 (defstruct (provenance (:constructor make-provenance))
   (source :user :type keyword :read-only t)
   (backend nil :type (or null string) :read-only t)
   (page nil :type (or null (integer 1)) :read-only t)
   (bbox nil :type list :read-only t)
-  (time-range nil :type list :read-only t))
+  (time-range nil :type list :read-only t)
+  ;; 0.4.0: what the element replaced (file header, Origins).
+  (origin nil :type (or null origin) :read-only t))
 
 ;;; Classes ------------------------------------------------------------------
 
@@ -145,6 +210,12 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
    (confidence :initarg :confidence :initform nil :reader element-confidence
                :type (or null (real 0 1))))
   (:documentation "Anything a score can point at by id."))
+
+(defun element-origin (element)
+  "The ORIGIN of ELEMENT's provenance, or NIL (file header, Origins)."
+  (check-type element element)
+  (let ((provenance (element-provenance element)))
+    (and provenance (provenance-origin provenance))))
 
 (defclass part (element)
   ((name :initarg :name :initform nil :reader part-name)

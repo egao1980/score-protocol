@@ -119,11 +119,26 @@
 ;;;;   Ab major, with the notes spelled for Ab major, not G# major with eight
 ;;;;   sharps. The measure after TO keeps its signatures. Anchors lose their
 ;;;;   TEXT (TRANSPOSE-CHORD-SYMBOL); N.C. stays N.C.
+;;;;   Origins (0.4.0, elements.lisp). An anchor's ORIGIN whose VALUE is a
+;;;;   chord symbol moves with the anchor: the value moves exactly as the
+;;;;   anchor's own symbol does in that bar (the same transposition, the same
+;;;;   respelling to T), and the ID stays. So the origin keeps reading as the
+;;;;   replaced symbol would in the transposed score. An anchor changes (and
+;;;;   gets provenance :user with the moved origin) when its symbol or its
+;;;;   origin's value moves; an origin with no value is kept as it is. Origins
+;;;;   of other elements (notes) are kept.
 ;;;;   A pitch, root or bass beyond two accidentals signals INVALID-EDIT. A tie
 ;;;;   from inside the range to a note outside it breaks and goes with the
 ;;;;   cascade.
 
 (in-package #:score-protocol)
+
+(defun %move-anchor-origin (anchor symbol move table)
+  "TRANSPOSE (0.4.0, file header, Origins): ANCHOR, whose origin has a chord-symbol
+value, moves to SYMBOL and its origin's value to (funcall MOVE value); when either
+changes, TABLE maps ANCHOR to the anchor with both, provenance :user."
+  (declare (ignore anchor symbol move table))
+  (%sc4-pending '%move-anchor-origin))
 
 (defun %signature-key-p (object)
   "True when OBJECT is a KEY with a signature of -7..7."
@@ -581,13 +596,16 @@ accidentals (INVALID-PITCH) is INVALID-EDIT, the one translated condition."
                 (when (and (null (measure-info-key after))
                            (not (equalp (aref target last) (svref keys (1+ ti)))))
                   (setf (gethash after table) (%user after :key (svref keys (1+ ti)))))))
-            ;; Chord symbols in the range.
+            ;; Chord symbols in the range, and (0.4.0) their origins' values.
             (dolist (anchor (%anchor-list score))
               (let ((i (- (car (anchor-position anchor)) first)))
                 (when (<= fi i ti)
-                  (let ((symbol (symbol-at (anchor-symbol anchor) i)))
-                    (unless (equal (%chord-symbol-to-sexp symbol) (%chord-symbol-to-sexp (anchor-symbol anchor)))
-                      (setf (gethash anchor table) (%user anchor :symbol symbol)))))))))
+                  (let ((symbol (symbol-at (anchor-symbol anchor) i))
+                        (origin (element-origin anchor)))
+                    (if (and origin (origin-value origin))
+                        (%move-anchor-origin anchor symbol (lambda (value) (symbol-at value i)) table)
+                        (unless (equal (%chord-symbol-to-sexp symbol) (%chord-symbol-to-sexp (anchor-symbol anchor)))
+                          (setf (gethash anchor table) (%user anchor :symbol symbol))))))))))
         (if (zerop (hash-table-count table))
             score
             (%substitute score table))))))

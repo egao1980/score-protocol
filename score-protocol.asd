@@ -1,6 +1,6 @@
 (defsystem "score-protocol"
-  :version "0.3.0"
-  :description "CLOS score model for cl-stack: parts, measures, voices, lyrics, chord symbols, edit operations, views and a builder for drafts with forward references"
+  :version "0.4.0"
+  :description "CLOS score model for cl-stack: parts, measures, voices, lyrics, chord symbols, edit operations, views, a builder for drafts with forward references, and origins in provenance"
   :author "egao1980"
   :license "MIT"
   :depends-on ((:version "music-theory" "0.5.0") "fset")
@@ -35,7 +35,8 @@
                (:file "sc1-views-test")
                (:file "sc1-properties-test")
                (:file "sc3-builder-test")
-               (:file "sc3-fixes-test"))
+               (:file "sc3-fixes-test")
+               (:file "sc4-origin-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))

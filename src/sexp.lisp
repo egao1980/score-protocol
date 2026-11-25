@@ -64,7 +64,9 @@
 ;;;; keyword, keys in this order, defaults left out:
 ;;;;   PLIST       SCORE-METADATA as it is
 ;;;;   PROVENANCE  (:source K (always) :backend STRING :page N :bbox (X Y W H)
-;;;;               :time-range (START END))
+;;;;               :time-range (START END) :origin ORIGIN)
+;;;;   ORIGIN      (0.4.0) (:id ID (always) :value SYMBOL): the ORIGIN of a
+;;;;               provenance (elements.lisp); :value left out when it is NIL
 ;;;;   SYMBOL      a music-theory CHORD-SYMBOL slot by slot in its slot order:
 ;;;;               (:root PC :quality K :extensions (N...) :alterations ((D . A)...)
 ;;;;               :suspension N :added ((D . A)...) :omitted (N...) :bass PC
@@ -87,6 +89,11 @@
 ;;;; plist has an unknown key or a key twice. Errors from the constructors
 ;;;; (TYPE-ERROR) and from music-theory's parsers (INVALID-PITCH, INVALID-METER,
 ;;;; INVALID-KEY) are not wrapped: they reach the caller with their restarts.
+;;;; An ORIGIN plist is read like the others (0.4.0): a key other than :id and
+;;;; :value, or a key twice, is a SCORE-FORMAT-ERROR whose POSITION is the
+;;;; ORIGIN plist; a missing or invalid :id is MAKE-ORIGIN's TYPE-ERROR. An
+;;;; origin is data: reading one mints nothing and checks nothing against the
+;;;; score's ids.
 
 (in-package #:score-protocol)
 
@@ -99,9 +106,10 @@
 
 (defparameter +provenance-fields+
   '((:source provenance-source) (:backend provenance-backend) (:page provenance-page)
-    (:bbox provenance-bbox) (:time-range provenance-time-range))
-  "PROVENANCE plist keys and readers, in canonical order; :SOURCE is always
-written. Data.")
+    (:bbox provenance-bbox) (:time-range provenance-time-range)
+    (:origin provenance-origin :origin))
+  "PROVENANCE plist keys, readers and codecs (NIL: the value as stored; :ORIGIN:
+an ORIGIN plist, 0.4.0), in canonical order; :SOURCE is always written. Data.")
 
 (defparameter +chord-symbol-fields+
   '((:root music-theory:chord-symbol-root :pitch-class)
@@ -119,12 +127,19 @@ written. Data.")
 
 ;;; Writing ------------------------------------------------------------------------
 
+(defun %origin-to-sexp (origin)
+  "The canonical ORIGIN plist of ORIGIN (file header, 0.4.0)."
+  (declare (ignore origin))
+  (%sc4-pending '%origin-to-sexp))
+
 (defun %provenance-to-sexp (provenance)
   (cons :source
         (cons (provenance-source provenance)
-              (loop for (key reader) in (rest +provenance-fields+)
+              (loop for (key reader codec) in (rest +provenance-fields+)
                     for value = (funcall reader provenance)
-                    when value nconc (list key (copy-tree value))))))
+                    when value nconc (list key (if (eq codec :origin)
+                                                   (%origin-to-sexp value)
+                                                   (copy-tree value)))))))
 
 (defun %chord-symbol-to-sexp (symbol)
   (loop for (key reader codec) in +chord-symbol-fields+
@@ -222,11 +237,19 @@ NIL, each value passed through DECODE (a function of the key and the value)."
         for value = (getf plist key)
         when value nconc (list key (funcall decode key value))))
 
+(defun %sexp-to-origin (plist)
+  "The ORIGIN the ORIGIN plist PLIST describes (file header, 0.4.0)."
+  (declare (ignore plist))
+  (%sc4-pending '%sexp-to-origin))
+
 (defun %sexp-to-provenance (plist)
   (let ((keys (mapcar #'first +provenance-fields+)))
     (%check-plist plist keys plist)
     (apply #'make-provenance
-           (%present-args plist keys (lambda (key value) (declare (ignore key)) (copy-tree value))))))
+           (%present-args plist keys (lambda (key value)
+                                       (if (eq (third (assoc key +provenance-fields+)) :origin)
+                                           (%sexp-to-origin value)
+                                           (copy-tree value)))))))
 
 (defun %sexp-to-chord-symbol (plist)
   (let ((keys (mapcar #'first +chord-symbol-fields+)))

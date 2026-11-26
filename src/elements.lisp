@@ -172,10 +172,6 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
 
 ;;; Provenance and origins ---------------------------------------------------
 
-(defun %sc4-pending (name)
-  "Signal that NAME belongs to the 0.4.0 (origin) contract and is not implemented yet."
-  (error "score-protocol 0.4.0 pending: ~A" name))
-
 (defstruct (origin (:constructor %make-origin (id value)) (:copier nil))
   "What a derived element replaced (file header, Origins). Build one with MAKE-ORIGIN."
   (id nil :type string :read-only t)
@@ -188,9 +184,12 @@ need one; :FORCED always shows it; :CAUTIONARY shows it in parentheses. Data.")
   (%make-origin id value))
 
 (defmethod print-object ((origin origin) stream)
-  ;; #<ORIGIN h-3 G7> (file header).
-  (declare (ignore stream))
-  (%sc4-pending 'print-object/origin))
+  ;; #<ORIGIN h-3 G7>, #<ORIGIN e-12 -> (file header). The word ORIGIN is written as
+  ;; text, not with :TYPE T, so PRINC and PRIN1 give the same text whatever *PACKAGE* is.
+  (let ((value (origin-value origin)))
+    (print-unreadable-object (origin stream)
+      (format stream "ORIGIN ~A ~A" (origin-id origin)
+              (if value (music-theory:print-chord-symbol value :dialect :pop) "-")))))
 
 (defstruct (provenance (:constructor make-provenance))
   (source :user :type keyword :read-only t)

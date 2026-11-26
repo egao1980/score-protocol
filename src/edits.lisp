@@ -301,9 +301,8 @@ them) is carried by SCORE outside REPLACED, the elements OP replaces."
   "The ORIGIN an edit that changes ELEMENT's own slots gives it: ELEMENT's own
 (file header, Origins, 0.4.0)."
   (check-type element element)
-  ;; Pending only where an origin exists: elements without one keep SC1's provenance.
-  (and (element-origin element)
-       (%sc4-pending '%edited-origin)))
+  ;; ORIGIN is immutable, so the same object is shared; NIL when ELEMENT has none.
+  (element-origin element))
 
 (defun %user-provenance (&optional element)
   "The provenance and confidence an edit gives (file header), as initargs: with

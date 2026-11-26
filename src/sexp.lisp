@@ -128,9 +128,11 @@ an ORIGIN plist, 0.4.0), in canonical order; :SOURCE is always written. Data.")
 ;;; Writing ------------------------------------------------------------------------
 
 (defun %origin-to-sexp (origin)
-  "The canonical ORIGIN plist of ORIGIN (file header, 0.4.0)."
-  (declare (ignore origin))
-  (%sc4-pending '%origin-to-sexp))
+  "The canonical ORIGIN plist of ORIGIN (file header, 0.4.0): :id always, :value
+when there is one."
+  (let ((value (origin-value origin)))
+    (list* :id (origin-id origin)
+           (and value (list :value (%chord-symbol-to-sexp value))))))
 
 (defun %provenance-to-sexp (provenance)
   (cons :source
@@ -238,9 +240,13 @@ NIL, each value passed through DECODE (a function of the key and the value)."
         when value nconc (list key (funcall decode key value))))
 
 (defun %sexp-to-origin (plist)
-  "The ORIGIN the ORIGIN plist PLIST describes (file header, 0.4.0)."
-  (declare (ignore plist))
-  (%sc4-pending '%sexp-to-origin))
+  "The ORIGIN the ORIGIN plist PLIST describes (file header, 0.4.0). A malformed
+plist is a SCORE-FORMAT-ERROR at PLIST; a missing or invalid id is MAKE-ORIGIN's
+TYPE-ERROR."
+  (%check-plist plist '(:id :value) plist)
+  (let ((value (getf plist :value)))
+    (make-origin :id (getf plist :id)
+                 :value (and value (%sexp-to-chord-symbol value)))))
 
 (defun %sexp-to-provenance (plist)
   (let ((keys (mapcar #'first +provenance-fields+)))

@@ -136,9 +136,19 @@
 (defun %move-anchor-origin (anchor symbol move table)
   "TRANSPOSE (0.4.0, file header, Origins): ANCHOR, whose origin has a chord-symbol
 value, moves to SYMBOL and its origin's value to (funcall MOVE value); when either
-changes, TABLE maps ANCHOR to the anchor with both, provenance :user."
-  (declare (ignore anchor symbol move table))
-  (%sc4-pending '%move-anchor-origin))
+changes, TABLE maps ANCHOR to the anchor with both, provenance :user. The
+origin's ID stays."
+  (let* ((origin (element-origin anchor))
+         (value (origin-value origin))
+         (moved (funcall move value)))
+    (unless (and (equal (%chord-symbol-to-sexp symbol) (%chord-symbol-to-sexp (anchor-symbol anchor)))
+                 (equal (%chord-symbol-to-sexp moved) (%chord-symbol-to-sexp value)))
+      ;; A :PROVENANCE among %USER's overrides wins over %USER-PROVENANCE's.
+      (setf (gethash anchor table)
+            (%user anchor :symbol symbol
+                          :provenance (make-provenance
+                                       :source :user
+                                       :origin (make-origin :id (origin-id origin) :value moved)))))))
 
 (defun %signature-key-p (object)
   "True when OBJECT is a KEY with a signature of -7..7."

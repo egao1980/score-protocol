@@ -2,23 +2,23 @@
 
 The canonical score model: parts, staves, measures, voices, notes and rests with rational durations, ties, slurs, lyrics (several verses), chord symbols, dynamics and articulations. Elements have stable ids and provenance/confidence slots. Includes an edit-operation algebra and view transforms (condensed, unfold repeats, extract part). Formats plug in as backends through serdes-protocol.
 
-**Status:** 0.4.0 contract (origins, below); 0.3.0 implemented. SC0, the model, element ids, provenance and confidence, the measure map and positions, `check-score` and the canonical s-expression form, is implemented. So is SC1, the edit-operation algebra (operations as values; `apply-edit` with an exact change set, `invert-edit`, composition, a canonical form for logs) and the views (`condensed-view`, `unfold`, `extract-part`). SC3 adds drafts: a `score-builder` hands out `draft-ref`s that stand for ids not minted yet, so a reader builds a score whose ties and spanners name later notes in one `make-score` call (`src/builder.lisp`); it also words position errors by what is wrong, drops `unfold`'s step limit, names a reflowed insert in later conditions, and gives `lossy-conversion` a direction. The rules are in the file headers under `src/`, and the Rove suite under `tests/` is the spec. The design is in the capability brief [cl-stack/docs/capabilities/score.md](https://github.com/egao1980/cl-stack/blob/main/docs/capabilities/score.md). Pitches, meters, keys, tempi and chord symbols are [music-theory](https://github.com/egao1980/music-theory) values.
+**Status:** 0.4.0 implemented (origins, below). SC0, the model, element ids, provenance and confidence, the measure map and positions, `check-score` and the canonical s-expression form, is implemented. So is SC1, the edit-operation algebra (operations as values; `apply-edit` with an exact change set, `invert-edit`, composition, a canonical form for logs) and the views (`condensed-view`, `unfold`, `extract-part`). SC3 adds drafts: a `score-builder` hands out `draft-ref`s that stand for ids not minted yet, so a reader builds a score whose ties and spanners name later notes in one `make-score` call (`src/builder.lisp`); it also words position errors by what is wrong, drops `unfold`'s step limit, names a reflowed insert in later conditions, and gives `lossy-conversion` a direction. The rules are in the file headers under `src/`, and the Rove suite under `tests/` is the spec. The design is in the capability brief [cl-stack/docs/capabilities/score.md](https://github.com/egao1980/cl-stack/blob/main/docs/capabilities/score.md). Pitches, meters, keys, tempi and chord symbols are [music-theory](https://github.com/egao1980/music-theory) values.
 
 ```sh
 cl-repo test --system score-protocol
 ```
 
-## 0.4.0 (contract): origins
+## 0.4.0: origins
 
 A tool that derives an element by replacing another one (a generator that rewrites a chord symbol, an OMR correction, a scripted edit) can now record what it replaced, in the element's provenance, so the original is recoverable from the score alone ([#11](https://github.com/egao1980/score-protocol/issues/11)). `provenance` gains an optional `origin`: an `origin` struct with the replaced element's `id` (a record, not a reference: it need not name an element of the score) and `value`, `nil` or a copy of the replaced chord symbol. `nil` means the element replaced nothing.
 
 | File | Contents | |
 |---|---|---|
 | `src/elements.lisp` | the Origins section of the header; `origin`, `make-origin`, the `origin` slot of `provenance`, `element-origin` | given |
-| `src/elements.lisp` | printing an origin, `#<ORIGIN h-3 G7>` | stubbed |
-| `src/sexp.lisp` | `:origin` in the provenance plist, the ORIGIN plist `(:id ID :value SYMBOL)` | grammar given; `%origin-to-sexp`, `%sexp-to-origin` stubbed |
-| `src/edits.lisp` | an edited element keeps its origin (`%edited-origin`) | stubbed |
-| `src/edit-measures.lisp` | TRANSPOSE moves a chord-symbol origin with its anchor (`%move-anchor-origin`) | stubbed |
+| `src/elements.lisp` | printing an origin, `#<ORIGIN h-3 G7>` | implemented |
+| `src/sexp.lisp` | `:origin` in the provenance plist, the ORIGIN plist `(:id ID :value SYMBOL)` | implemented |
+| `src/edits.lisp` | an edited element keeps its origin (`%edited-origin`) | implemented |
+| `src/edit-measures.lisp` | TRANSPOSE moves a chord-symbol origin with its anchor (`%move-anchor-origin`) | implemented |
 | `tests/sc4-origin-test.lisp` | construction and type errors, printing, canonical forms, the round trip, `score-equal`, read errors, origins as records (no issue, no element, no serial), copies and views, edits (sharing, an edited element, a given anchor, edit forms, inverses), TRANSPOSE | the spec |
 
 Decisions to review:

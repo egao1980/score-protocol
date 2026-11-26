@@ -8,7 +8,8 @@
   (:documentation "The score model, stable element ids, provenance and confidence, the
 measure map and positions, validation and the canonical s-expression form (SC0);
 the edit-operation algebra and the condensed, unfolded and extracted views
-(SC1); drafts and the score builder, refs to elements not yet minted (SC3).
+(SC1); drafts and the score builder, refs to elements not yet minted (SC3);
+origins, what a derived element replaced, in its provenance (0.4.0).
 Formats live in backends (score-backend-musicxml, score-backend-midi).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
@@ -40,6 +41,9 @@ Formats live in backends (score-backend-musicxml, score-backend-midi).")
    #:provenance-source #:provenance-backend #:provenance-page
    #:provenance-bbox #:provenance-time-range
    #:element #:element-id #:element-provenance #:element-confidence
+   ;; Origins: what a derived element replaced (0.4.0; see elements.lisp)
+   #:origin #:make-origin #:origin-p #:origin-id #:origin-value
+   #:provenance-origin #:element-origin
    ;; Parts, staves, voices (SC0)
    #:part #:make-part #:part-name #:part-abbreviation #:part-staves #:part-voices
    #:staff #:make-staff #:staff-clef

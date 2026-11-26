@@ -73,6 +73,17 @@
 ;;;; children (score.lisp's grammar): a voice whose events change, and a chord
 ;;;; whose notes are transposed, keep their provenance. Given elements are
 ;;;; stored as given, provenance and confidence included.
+;;;; Origins (0.4.0, elements.lisp). An element whose own slots an operation
+;;;; changes keeps its ORIGIN: its new provenance is (make-provenance :source
+;;;; :user :origin O), O its ELEMENT-ORIGIN before the edit (NIL when it had
+;;;; none), so a derived element the user then edits still records what it
+;;;; replaced. TRANSPOSE moves a chord-symbol origin with its anchor
+;;;; (edit-measures.lisp). Every element an operation makes (split pieces, fill
+;;;; rests, ties between pieces, measures, the rest a deleted note leaves) has
+;;;; no origin, even one that takes an existing id. Elements the operation
+;;;; doesn't change keep everything, origins included (Sharing, below), and
+;;;; INVERT-EDIT gives every element back as it was, origin included. An
+;;;; origin's ID is no element id: no precondition, mint or cascade reads it.
 ;;;;
 ;;;; The change set. A CHANGE-SET holds three lists of ids:
 ;;;;   CREATED   ids of the result that SCORE lacks, in the result's document
@@ -286,9 +297,18 @@ them) is carried by SCORE outside REPLACED, the elements OP replaces."
 
 ;;; Rebuilding elements ------------------------------------------------------------
 
-(defun %user-provenance ()
-  "The provenance and confidence an edit gives (file header), as initargs."
-  (list :provenance (make-provenance :source :user) :confidence 1))
+(defun %edited-origin (element)
+  "The ORIGIN an edit that changes ELEMENT's own slots gives it: ELEMENT's own
+(file header, Origins, 0.4.0)."
+  (check-type element element)
+  ;; ORIGIN is immutable, so the same object is shared; NIL when ELEMENT has none.
+  (element-origin element))
+
+(defun %user-provenance (&optional element)
+  "The provenance and confidence an edit gives (file header), as initargs: with
+ELEMENT, the element it changes, whose origin it keeps (0.4.0)."
+  (list :provenance (make-provenance :source :user :origin (and element (%edited-origin element)))
+        :confidence 1))
 
 (defun %remake (element &rest overrides)
   "ELEMENT built again through its grammar row's constructor, with OVERRIDES
@@ -301,8 +321,9 @@ normalise as the constructors do. Provenance is kept unless overridden."
                          nconc (list (%field-initarg field) (%field-value field element)))))))
 
 (defun %user (element &rest overrides)
-  "%REMAKE with OVERRIDES and the provenance of an edit: ELEMENT's own slots change."
-  (apply #'%remake element (append overrides (%user-provenance))))
+  "%REMAKE with OVERRIDES and the provenance of an edit: ELEMENT's own slots change,
+its origin stays (0.4.0). A :PROVENANCE among OVERRIDES wins."
+  (apply #'%remake element (append overrides (%user-provenance element))))
 
 (defun %field-initarg-of (element reader)
   "The initarg of the field of ELEMENT's grammar row read by READER."
